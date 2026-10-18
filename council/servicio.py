@@ -38,6 +38,7 @@ def ejecutar(
     miembros: list[str] | None = None,
     presidente: str = "claude",
     seudonimizar: bool = False,
+    nivel: str = "estandar",
     carpeta: str | Path = "salidas",
     registro=print,
     fabricas: dict | None = None,
@@ -56,8 +57,9 @@ def ejecutar(
         documento = documento or None
         registro(f"Seudonimizados {len(mapa)} datos.")
 
-    instancias = {clave: fabricas[clave]() for clave in miembros}
-    consejo = Consejo(list(instancias.values()), presidente=instancias[presidente], registro=registro)
+    instancias = {clave: fabricas[clave](nivel=nivel) for clave in miembros}
+    consejo = Consejo(list(instancias.values()), presidente=instancias[presidente],
+                      registro=registro, nivel=nivel)
     resultado = consejo.deliberar(tarea, documento, modo=modo)
 
     restaurar = partial(privacidad.restaurar, mapa=mapa) if mapa else None

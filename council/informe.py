@@ -39,6 +39,7 @@ def a_markdown(r: Resultado, incluir_detalle: bool = True) -> str:
         "",
         f"- **Fecha (UTC):** {r.fecha}",
         f"- **Modo:** {MODOS[r.modo][0]}",
+        f"- **Nivel:** {'Extremo (modelos más capaces y esfuerzo máximo)' if r.nivel == 'extremo' else 'Estándar'}",
         f"- **Miembros:** {modelos}",
         f"- **Presidente:** {r.presidente}",
         f"- **Tarea:** {r.tarea}",

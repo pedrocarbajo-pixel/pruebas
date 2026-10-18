@@ -92,6 +92,16 @@
       </div>
     </div>
 
+    <label for="nivel">Nivel de la tarea</label>
+    <select id="nivel" name="nivel">
+      <option value="estandar">Estándar</option>
+      <option value="extremo">Extremo · modelos más capaces y esfuerzo máximo</option>
+    </select>
+    <div id="aviso-extremo" class="aviso" style="margin-top:8px" hidden>
+      Solo para casos críticos (riesgo o cuantía muy elevados). La deliberación será bastante más lenta
+      y su coste, muy superior al del nivel estándar.
+    </div>
+
     <label class="opciones" style="margin-top:16px">
       <span><input type="checkbox" name="seudonimizar" checked> Seudonimizar DNI, NIE, CIF, IBAN, correos y teléfonos antes de enviar</span>
     </label>
@@ -186,8 +196,15 @@ async function seguir(id) {
   $("resultado").scrollIntoView({ behavior: "smooth" });
 }
 
+$("nivel").addEventListener("change", () => {
+  $("aviso-extremo").hidden = $("nivel").value !== "extremo";
+});
+
 $("formulario").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if ($("nivel").value === "extremo" &&
+      !confirm("Nivel EXTREMO: se usarán los modelos más capaces con esfuerzo máximo. " +
+               "Es mucho más lento y costoso. ¿Desea continuar?")) return;
   mostrarError("");
   $("resultado").hidden = true;
   $("enviar").disabled = true;

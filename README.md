@@ -23,6 +23,21 @@ Con tres miembros, cada consulta hace 7 llamadas (3 borradores + 3 revisiones + 
 | `procedimiento_tributario` | Gestión, inspección, recaudación, sancionador o revisión: plazos, posibles defectos, alegaciones y recursos, y borrador de escrito. |
 | `general` | Cualquier otra tarea compleja. |
 
+## Nivel de la tarea: estándar o extremo
+
+Para casos críticos (cuantía o riesgo muy elevados) puede activarse el **nivel extremo** (`--nivel extremo` o el selector de la web, que pide confirmación). En ese nivel:
+
+| Miembro | Estándar | Extremo |
+|---|---|---|
+| Claude | `CLAUDE_MODEL` | `CLAUDE_MODEL_EXTREMO`, razonamiento adaptativo, esfuerzo `max` → `xhigh` → `high`, hasta 64 000 tokens de salida |
+| ChatGPT | `OPENAI_MODEL` | `OPENAI_MODEL_EXTREMO` (por defecto `gpt-5.5-pro`), esfuerzo de razonamiento `max` → `xhigh` → `high` |
+| Perplexity | `PERPLEXITY_PRESET` | `PERPLEXITY_PRESET_EXTREMO`, esfuerzo `xhigh` → `high`, búsqueda con contexto amplio |
+
+- Si la API de un proveedor rechaza un nivel de esfuerzo, se prueba automáticamente el siguiente inferior, y el informe indica el modelo y el esfuerzo **efectivamente** utilizados.
+- Los miembros reciben además instrucciones de máximo rigor: todas las interpretaciones razonables, doble comprobación de citas y escenarios de peor caso.
+- Es notablemente más lento y costoso: úselo solo cuando el caso lo justifique.
+- Revise periódicamente qué modelo es el más capaz de cada proveedor y actualice las variables `*_EXTREMO`.
+
 ## Instalación
 
 ```bash
@@ -48,6 +63,8 @@ Permite escribir la tarea, adjuntar un documento (.txt, .md, .docx o .pdf), eleg
 python -m council informe_tributario "Tributación en IRPF de la venta de un inmueble heredado en 2025" 
 python -m council procedimiento_tributario "Analiza esta propuesta de liquidación y propone alegaciones" \
     --documento propuesta.pdf --seudonimizar
+python -m council dictamen_juridico "Riesgo de derivación de responsabilidad al administrador" \
+    --documento expediente.pdf --nivel extremo --seudonimizar
 python -m council contrato_revisar "Revisa este contrato desde la posición del cliente" \
     --documento contrato.docx --miembros claude chatgpt --presidente chatgpt
 ```

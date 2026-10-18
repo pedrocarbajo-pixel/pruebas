@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from . import prompts
-from .providers import Miembro
+from .providers import NIVELES, Miembro
 
 
 @dataclass
@@ -20,6 +20,7 @@ class Resultado:
     sintesis: str = ""
     fecha: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     modelos: dict[str, str] = field(default_factory=dict)
+    nivel: str = "estandar"
 
 
 class Consejo:
@@ -32,9 +33,14 @@ class Consejo:
        consensos, discrepancias y cuestiones pendientes de verificación humana.
     """
 
-    def __init__(self, miembros: list[Miembro], presidente: Miembro | None = None, registro=print):
+    def __init__(self, miembros: list[Miembro], presidente: Miembro | None = None, registro=print,
+                 nivel: str = "estandar"):
         if len(miembros) < 2:
             raise ValueError("El consejo necesita al menos dos miembros.")
+        if nivel not in NIVELES:
+            raise ValueError(f"Nivel desconocido: {nivel}. Opciones: {', '.join(NIVELES)}")
+        self.nivel = nivel
+        self.sistema = prompts.sistema(nivel)
         self.miembros = miembros
         self.presidente = presidente or miembros[0]
         self.registro = registro
@@ -53,9 +59,11 @@ class Consejo:
             tarea=tarea,
             modo=modo,
             presidente=self.presidente.nombre,
-            modelos={m.nombre: m.modelo for m in self.miembros},
+            nivel=self.nivel,
         )
 
+        if self.nivel == "extremo":
+            self.registro("Nivel EXTREMO: modelos más capaces y esfuerzo máximo (más lento y costoso).")
         self.registro("Fase 1/3 · Borradores independientes…")
         mensaje = prompts.FASE_BORRADOR.format(**contexto)
         resultado.borradores = self._en_paralelo(
@@ -76,16 +84,21 @@ class Consejo:
 
         self.registro(f"Fase 3/3 · Síntesis del presidente ({self.presidente.nombre})…")
         resultado.sintesis = self.presidente.preguntar(
-            prompts.PRINCIPIOS,
+            self.sistema,
             prompts.FASE_SINTESIS.format(**contexto, materiales=self._materiales(resultado)),
         )
+        # Se anota al final porque el esfuerzo efectivo puede haberse rebajado durante la deliberación.
+        resultado.modelos = {
+            m.nombre: m.descripcion() if hasattr(m, "descripcion") else m.modelo
+            for m in self.miembros
+        }
         self.registro("Deliberación terminada.")
         return resultado
 
     def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]]) -> dict[str, str]:
         with ThreadPoolExecutor(max_workers=len(encargos)) as ejecutor:
             futuros = {
-                clave: ejecutor.submit(miembro.preguntar, prompts.PRINCIPIOS, mensaje)
+                clave: ejecutor.submit(miembro.preguntar, self.sistema, mensaje)
                 for clave, (miembro, mensaje) in encargos.items()
             }
             return {clave: futuro.result() for clave, futuro in futuros.items()}

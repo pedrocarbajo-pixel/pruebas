@@ -8,7 +8,7 @@ import pytest
 from council import privacidad
 from council.consejo import Consejo
 from council.informe import guardar
-from council.providers import formatear_con_fuentes
+from council.providers import MiembroClaude, MiembroOpenAI, formatear_con_fuentes
 from council.servicio import ejecutar
 from council.web import crear_app
 
@@ -31,7 +31,7 @@ class MiembroFalso:
 
 
 def fabricas_falsas():
-    return {clave: (lambda n=nombre: MiembroFalso(n))
+    return {clave: (lambda n=nombre, nivel="estandar": MiembroFalso(n))
             for clave, nombre in [("claude", "Claude"), ("chatgpt", "ChatGPT"),
                                   ("perplexity", "Perplexity")]}
 
@@ -124,7 +124,7 @@ def test_servicio_seudonimiza_antes_de_enviar(tmp_path):
             enviados.append(mensaje)
             return super().preguntar(sistema, mensaje)
 
-    fabricas = {"claude": lambda: Espia("Claude"), "chatgpt": lambda: Espia("ChatGPT")}
+    fabricas = {"claude": lambda nivel: Espia("Claude"), "chatgpt": lambda nivel: Espia("ChatGPT")}
     salida = ejecutar("Cliente con DNI 12345678Z", "IBAN ES9121000418450200051332",
                       seudonimizar=True, carpeta=tmp_path, registro=lambda *_: None,
                       fabricas=fabricas)
@@ -151,7 +151,7 @@ def test_web_flujo_completo(tmp_path):
     r = cliente.post("/api/consultas", data={
         "tarea": "Analiza la liquidación", "modo": "procedimiento_tributario",
         "miembros": ["claude", "chatgpt", "perplexity"], "presidente": "perplexity",
-        "seudonimizar": "on",
+        "seudonimizar": "on", "nivel": "extremo",
     })
     assert r.status_code == 202
     id_consulta = r.get_json()["id"]
@@ -162,7 +162,105 @@ def test_web_flujo_completo(tmp_path):
         time.sleep(0.05)
     assert estado["estado"] == "terminada", estado
     assert "Síntesis de Perplexity" in estado["informe"]
+    assert "**Nivel:** Extremo" in estado["informe"]
     assert any("Fase 3/3" in m for m in estado["mensajes"])
     descarga = cliente.get(f"/api/consultas/{id_consulta}/registro")
     assert descarga.status_code == 200 and json.loads(descarga.data)["modo"] == "procedimiento_tributario"
     assert cliente.get("/api/consultas/inexistente").status_code == 404
+
+
+class ErrorPeticion(Exception):
+    status_code = 400
+
+
+class RespuestasOpenAIFalsas:
+    """Rechaza el esfuerzo «max» como lo haría un modelo que no lo admite."""
+
+    def __init__(self):
+        self.peticiones = []
+
+    def create(self, **parametros):
+        self.peticiones.append(parametros)
+        if parametros.get("reasoning", {}).get("effort") == "max":
+            raise ErrorPeticion("effort no admitido")
+        return NS(output_text="ok")
+
+
+def test_extremo_openai_rebaja_esfuerzo_no_admitido(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    miembro = MiembroOpenAI(nivel="extremo")
+    falsas = RespuestasOpenAIFalsas()
+    miembro._cliente = NS(responses=falsas)
+    assert miembro.modelo == "gpt-5.5-pro"
+    assert miembro.preguntar("s", "m") == "ok" and miembro.preguntar("s", "m") == "ok"
+    esfuerzos = [p["reasoning"]["effort"] for p in falsas.peticiones]
+    assert esfuerzos == ["max", "xhigh", "xhigh"]  # el nivel rebajado se mantiene
+    assert miembro.descripcion() == "gpt-5.5-pro · esfuerzo xhigh"
+
+
+def test_estandar_openai_sin_esfuerzo(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    monkeypatch.setenv("OPENAI_MODEL", "modelo-normal")
+    miembro = MiembroOpenAI()
+    falsas = RespuestasOpenAIFalsas()
+    miembro._cliente = NS(responses=falsas)
+    miembro.preguntar("s", "m")
+    assert "reasoning" not in falsas.peticiones[0] and miembro.descripcion() == "modelo-normal"
+
+
+def test_extremo_claude_usa_esfuerzo_maximo_y_razonamiento(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clave-falsa")
+    peticiones = []
+
+    class Flujo:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_final_message(self):
+            return NS(content=[NS(type="thinking", text="(razonamiento)"), NS(type="text", text="ok")])
+
+    def stream(**parametros):
+        peticiones.append(parametros)
+        return Flujo()
+
+    miembro = MiembroClaude(nivel="extremo")
+    miembro._cliente = NS(messages=NS(stream=stream))
+    assert miembro.preguntar("s", "m") == "ok"
+    assert peticiones[0]["output_config"] == {"effort": "max"}
+    assert peticiones[0]["thinking"] == {"type": "adaptive"}
+    assert peticiones[0]["max_tokens"] == 64000
+
+
+def test_error_no_relacionado_con_esfuerzo_se_propaga(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    miembro = MiembroOpenAI(nivel="extremo")
+
+    def falla(**_):
+        raise ErrorPeticion("modelo inexistente")
+
+    miembro._cliente = NS(responses=NS(create=falla))
+    with pytest.raises(ErrorPeticion):
+        miembro.preguntar("s", "m")  # agota la escala y propaga el error, sin bucle infinito
+
+
+def test_consejo_extremo(tmp_path):
+    a, b = MiembroFalso("Claude"), MiembroFalso("ChatGPT")
+    sistemas = []
+    original = a.preguntar
+    a.preguntar = lambda s, m: (sistemas.append(s), original(s, m))[1]
+    r = Consejo([a, b], registro=lambda *_: None, nivel="extremo").deliberar("T")
+    assert r.nivel == "extremo" and all("NIVEL EXTREMO" in s for s in sistemas)
+    md, _ = guardar(r, tmp_path)
+    assert "**Nivel:** Extremo" in md.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        Consejo([a, b], nivel="maximo")
+
+
+def test_web_valida_nivel(tmp_path):
+    cliente = crear_app(tmp_path, fabricas=fabricas_falsas()).test_client()
+    r = cliente.post("/api/consultas", data={"tarea": "T", "nivel": "maximo",
+                                             "miembros": ["claude", "chatgpt"], "presidente": "claude"})
+    assert r.status_code == 400

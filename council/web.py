@@ -17,6 +17,7 @@ from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
 from .informe import leer_documento
 from .prompts import MODOS
+from .providers import NIVELES
 from .servicio import FABRICAS, ejecutar
 
 CLAVES_API = {
@@ -58,11 +59,14 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
         miembros = request.form.getlist("miembros")
         presidente = request.form.get("presidente", "")
         seudonimizar = request.form.get("seudonimizar") == "on"
+        nivel = request.form.get("nivel", "estandar")
 
         if not tarea:
             return jsonify(error="Escriba la tarea."), 400
         if modo not in MODOS:
             return jsonify(error="Modo no válido."), 400
+        if nivel not in NIVELES:
+            return jsonify(error="Nivel no válido."), 400
         activos = disponibles()
         if len(miembros) < 2 or any(not activos.get(m) for m in miembros):
             return jsonify(error="Seleccione al menos dos miembros con clave de API configurada."), 400
@@ -96,7 +100,7 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
             try:
                 salida = ejecutar(
                     tarea=tarea, documento=documento, modo=modo, miembros=miembros,
-                    presidente=presidente, seudonimizar=seudonimizar,
+                    presidente=presidente, seudonimizar=seudonimizar, nivel=nivel,
                     carpeta=carpeta_salida, registro=anotar, fabricas=fabricas,
                 )
                 with cerrojo:

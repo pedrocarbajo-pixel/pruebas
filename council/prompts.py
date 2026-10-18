@@ -15,6 +15,18 @@ número de consulta de la DGT, resolución del TEAC, cláusula del documento, et
 - Responde en castellano, con tono formal, claro y neutral.
 - Tu trabajo es un borrador de apoyo: la decisión final corresponde a un profesional humano cualificado."""
 
+INSTRUCCIONES_EXTREMO = """
+CASO DE NIVEL EXTREMO (riesgo o cuantía muy elevados). Además de lo anterior:
+- Analiza de forma exhaustiva todas las interpretaciones razonables, incluidas las más desfavorables.
+- Comprueba dos veces cada cita normativa, jurisprudencial o administrativa antes de incluirla.
+- Identifica los escenarios de peor caso y sus consecuencias (económicas, sancionadoras o procesales).
+- Señala expresamente cualquier punto en el que un error tendría consecuencias graves."""
+
+
+def sistema(nivel: str = "estandar") -> str:
+    return PRINCIPIOS + (INSTRUCCIONES_EXTREMO if nivel == "extremo" else "")
+
+
 MODOS = {
     "general": ("General", "Tarea compleja de propósito general."),
     "contrato_revisar": ("Revisión de contrato", """\
