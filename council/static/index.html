@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consejo de LLM</title>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<style>
+  :root {
+    --fondo: #f6f5f2; --panel: #ffffff; --texto: #1d1d1f; --tenue: #6b6b70;
+    --borde: #dcdad5; --acento: #2f4f8f; --acento-texto: #ffffff;
+    --aviso: #fff6e0; --aviso-borde: #e6c46a; --error: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #161618; --panel: #1f1f22; --texto: #ececee; --tenue: #a0a0a8;
+      --borde: #34343a; --acento: #8fb0f0; --acento-texto: #10121a;
+      --aviso: #2d2617; --aviso-borde: #7a6326; --error: #f2847c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto);
+         font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .subtitulo { color: var(--tenue); margin: 0 0 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--borde); border-radius: 10px;
+           padding: 20px; margin-bottom: 20px; }
+  label { display: block; font-weight: 600; margin: 14px 0 6px; }
+  label:first-child { margin-top: 0; }
+  textarea, select, input[type=file] { width: 100%; font: inherit; color: inherit;
+           background: var(--fondo); border: 1px solid var(--borde); border-radius: 8px; padding: 10px; }
+  textarea { min-height: 140px; resize: vertical; }
+  .fila { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .fila { grid-template-columns: 1fr; } }
+  .opciones { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  .opciones label { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; margin: 0; }
+  .ayuda { color: var(--tenue); font-size: .875rem; margin-top: 4px; }
+  button, .boton { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 18px;
+           background: var(--acento); color: var(--acento-texto); cursor: pointer; text-decoration: none;
+           display: inline-block; }
+  button:disabled { opacity: .5; cursor: progress; }
+  .boton.secundario { background: transparent; color: var(--acento); border: 1px solid var(--acento); }
+  .acciones { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .aviso { background: var(--aviso); border: 1px solid var(--aviso-borde); border-radius: 8px;
+           padding: 10px 14px; font-size: .9rem; }
+  .error { color: var(--error); font-weight: 600; }
+  #progreso ul { margin: 8px 0 0; padding-left: 18px; color: var(--tenue);
+           font-variant-numeric: tabular-nums; }
+  #informe { overflow-wrap: anywhere; }
+  #informe table { border-collapse: collapse; display: block; overflow-x: auto; margin: 12px 0; }
+  #informe th, #informe td { border: 1px solid var(--borde); padding: 6px 10px; vertical-align: top; }
+  #informe pre { white-space: pre-wrap; }
+  #informe a { color: var(--acento); }
+  #informe blockquote { margin: 0; padding: 8px 14px; border-left: 4px solid var(--aviso-borde);
+           background: var(--aviso); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Consejo de LLM</h1>
+  <p class="subtitulo">Deliberación entre Claude, ChatGPT y Perplexity para tareas jurídicas y tributarias.</p>
+
+  <form id="formulario" class="panel">
+    <label for="tarea">Tarea</label>
+    <textarea id="tarea" name="tarea" required
+      placeholder="Ej.: Analiza esta propuesta de liquidación del IRPF 2023 y propone las alegaciones."></textarea>
+
+    <div class="fila">
+      <div>
+        <label for="modo">Tipo de trabajo</label>
+        <select id="modo" name="modo"></select>
+      </div>
+      <div>
+        <label for="documento">Documento (opcional)</label>
+        <input id="documento" name="documento" type="file" accept=".txt,.md,.docx,.pdf">
+        <div class="ayuda">.txt, .md, .docx o .pdf · máx. 25 MB</div>
+      </div>
+    </div>
+
+    <div class="fila">
+      <div>
+        <label>Miembros del consejo</label>
+        <div id="miembros" class="opciones"></div>
+        <div class="ayuda">Mínimo dos. Los desactivados no tienen clave de API configurada.</div>
+      </div>
+      <div>
+        <label for="presidente">Presidente (redacta la síntesis)</label>
+        <select id="presidente" name="presidente"></select>
+      </div>
+    </div>
+
+    <label class="opciones" style="margin-top:16px">
+      <span><input type="checkbox" name="seudonimizar" checked> Seudonimizar DNI, NIE, CIF, IBAN, correos y teléfonos antes de enviar</span>
+    </label>
+    <div class="ayuda">No detecta nombres propios ni direcciones.</div>
+
+    <div class="acciones">
+      <button id="enviar" type="submit">Convocar al consejo</button>
+    </div>
+    <p id="error" class="error" hidden></p>
+  </form>
+
+  <section id="progreso" class="panel" hidden>
+    <strong id="estado">Deliberando…</strong>
+    <ul id="mensajes"></ul>
+  </section>
+
+  <section id="resultado" class="panel" hidden>
+    <div class="aviso">Borrador generado por modelos de lenguaje. Debe revisarlo un profesional cualificado antes de usarlo.</div>
+    <div class="acciones">
+      <a id="bajar-informe" class="boton" href="#">Descargar informe (.md)</a>
+      <a id="bajar-registro" class="boton secundario" href="#">Descargar registro de auditoría (.json)</a>
+    </div>
+    <article id="informe"></article>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function pintarMarkdown(texto) {
+  if (window.marked && window.DOMPurify) return DOMPurify.sanitize(marked.parse(texto));
+  const pre = document.createElement("pre");
+  pre.textContent = texto;
+  return pre.outerHTML;
+}
+
+function actualizarPresidentes() {
+  const elegidos = [...document.querySelectorAll("#miembros input:checked")];
+  const previo = $("presidente").value;
+  $("presidente").innerHTML = "";
+  for (const c of elegidos) $("presidente").add(new Option(c.dataset.nombre, c.value));
+  if (elegidos.some((c) => c.value === previo)) $("presidente").value = previo;
+}
+
+async function cargarConfiguracion() {
+  const conf = await (await fetch("/api/configuracion")).json();
+  for (const m of conf.modos) $("modo").add(new Option(m.nombre, m.id));
+  for (const m of conf.miembros) {
+    const etiqueta = document.createElement("label");
+    etiqueta.innerHTML = `<input type="checkbox" name="miembros" value="${m.id}"> `;
+    const casilla = etiqueta.firstChild;
+    casilla.dataset.nombre = m.nombre;
+    casilla.checked = m.disponible;
+    casilla.disabled = !m.disponible;
+    casilla.addEventListener("change", actualizarPresidentes);
+    etiqueta.append(m.nombre);
+    $("miembros").append(etiqueta);
+  }
+  actualizarPresidentes();
+}
+
+function mostrarError(texto) {
+  $("error").textContent = texto;
+  $("error").hidden = !texto;
+}
+
+async function seguir(id) {
+  let r;
+  try {
+    r = await (await fetch(`/api/consultas/${id}`)).json();
+  } catch {
+    return setTimeout(() => seguir(id), 5000);  // corte de red pasajero: se reintenta
+  }
+  $("mensajes").innerHTML = "";
+  for (const m of r.mensajes) {
+    const li = document.createElement("li");
+    li.textContent = m;
+    $("mensajes").append(li);
+  }
+  if (r.estado === "en_curso") return setTimeout(() => seguir(id), 2500);
+
+  $("enviar").disabled = false;
+  if (r.estado === "error") {
+    $("estado").textContent = "La deliberación ha fallado.";
+    return mostrarError(r.error);
+  }
+  $("estado").textContent = "Deliberación terminada.";
+  $("informe").innerHTML = pintarMarkdown(r.informe);
+  $("bajar-informe").href = `/api/consultas/${id}/informe`;
+  $("bajar-registro").href = `/api/consultas/${id}/registro`;
+  $("resultado").hidden = false;
+  $("resultado").scrollIntoView({ behavior: "smooth" });
+}
+
+$("formulario").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  mostrarError("");
+  $("resultado").hidden = true;
+  $("enviar").disabled = true;
+  const r = await fetch("/api/consultas", { method: "POST", body: new FormData(e.target) });
+  const datos = await r.json();
+  if (!r.ok) {
+    $("enviar").disabled = false;
+    return mostrarError(datos.error);
+  }
+  $("estado").textContent = "Deliberando… (puede tardar varios minutos)";
+  $("mensajes").innerHTML = "";
+  $("progreso").hidden = false;
+  seguir(datos.id);
+});
+
+cargarConfiguracion();
+</script>
+</body>
+</html>

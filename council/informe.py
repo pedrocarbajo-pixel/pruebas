@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .consejo import Resultado
+from .prompts import MODOS
 
 AVISO = (
     "> **Aviso:** este informe ha sido generado por modelos de lenguaje y constituye un borrador "
@@ -37,7 +38,7 @@ def a_markdown(r: Resultado, incluir_detalle: bool = True) -> str:
         AVISO,
         "",
         f"- **Fecha (UTC):** {r.fecha}",
-        f"- **Modo:** {r.modo}",
+        f"- **Modo:** {MODOS[r.modo][0]}",
         f"- **Miembros:** {modelos}",
         f"- **Presidente:** {r.presidente}",
         f"- **Tarea:** {r.tarea}",
@@ -49,8 +50,8 @@ def a_markdown(r: Resultado, incluir_detalle: bool = True) -> str:
         for nombre, texto in r.borradores.items():
             lineas += ["", f"## {nombre}", "", texto]
         lineas += ["", "# Anexo II · Revisiones cruzadas"]
-        for clave, texto in r.revisiones.items():
-            lineas += ["", f"## {clave}", "", texto]
+        for revisor, texto in r.revisiones.items():
+            lineas += ["", f"## Revisión de {revisor}", "", texto]
     return "\n".join(lineas) + "\n"
 
 
@@ -58,7 +59,7 @@ def guardar(r: Resultado, carpeta: str | Path, restaurar=None) -> tuple[Path, Pa
     """Guarda el informe en Markdown y el registro completo en JSON (para auditoría)."""
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
-    sello = r.fecha.replace(":", "").replace("-", "")[:15]
+    sello = r.fecha.replace(":", "").replace("-", "").replace(".", "_")[:22]
     informe = a_markdown(r)
     datos = asdict(r)
     if restaurar:

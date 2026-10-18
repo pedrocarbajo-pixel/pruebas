@@ -75,3 +75,57 @@ class MiembroOpenAI:
             return respuesta.output_text
 
         return _con_reintentos(llamada)
+
+
+@dataclass
+class MiembroPerplexity:
+    """Miembro con búsqueda web: aporta fuentes actualizadas y verificables.
+
+    Usa la Agent API de Perplexity (`responses.create`). Las fuentes consultadas se
+    añaden al final de la respuesta para que el resto del consejo pueda contrastarlas.
+    """
+
+    preset: str = field(default_factory=lambda: os.getenv("PERPLEXITY_PRESET", "sonar-pro"))
+    dominios: list[str] = field(default_factory=lambda: [
+        d.strip() for d in os.getenv("PERPLEXITY_DOMINIOS", "").split(",") if d.strip()
+    ])
+    nombre: str = "Perplexity"
+
+    def __post_init__(self) -> None:
+        import perplexity
+
+        self._cliente = perplexity.Perplexity()
+        self.modelo = self.preset
+
+    def preguntar(self, sistema: str, mensaje: str) -> str:
+        parametros: dict = {"preset": self.preset, "instructions": sistema, "input": mensaje}
+        if self.dominios:
+            # Restringe la búsqueda a fuentes oficiales (BOE, AEAT, CENDOJ, EUR-Lex…).
+            parametros["tools"] = [
+                {"type": "web_search", "filters": {"search_domain_filter": self.dominios}}
+            ]
+
+        def llamada() -> str:
+            return formatear_con_fuentes(self._cliente.responses.create(**parametros))
+
+        return _con_reintentos(llamada)
+
+
+def formatear_con_fuentes(respuesta) -> str:
+    """Devuelve el texto de una respuesta de Perplexity seguido de la lista de fuentes."""
+    fuentes: dict[str, str] = {}
+    for item in respuesta.output:
+        if item.type == "search_results":
+            for r in item.results:
+                fuentes.setdefault(r.url, r.title)
+        elif item.type == "message":
+            for parte in item.content:
+                for anotacion in parte.annotations or []:
+                    if anotacion.url:
+                        fuentes.setdefault(anotacion.url, anotacion.title or anotacion.url)
+    texto = respuesta.output_text
+    if fuentes:
+        texto += "\n\n### Fuentes consultadas por Perplexity\n" + "\n".join(
+            f"{i}. [{titulo}]({url})" for i, (url, titulo) in enumerate(fuentes.items(), 1)
+        )
+    return texto

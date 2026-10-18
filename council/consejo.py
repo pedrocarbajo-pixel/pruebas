@@ -16,7 +16,7 @@ class Resultado:
     modo: str
     presidente: str
     borradores: dict[str, str] = field(default_factory=dict)
-    revisiones: dict[str, str] = field(default_factory=dict)  # clave: «revisor → revisado»
+    revisiones: dict[str, str] = field(default_factory=dict)  # clave: nombre del revisor
     sintesis: str = ""
     fecha: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     modelos: dict[str, str] = field(default_factory=dict)
@@ -26,7 +26,8 @@ class Consejo:
     """Consejo de LLM en tres fases.
 
     1. Cada miembro responde de forma independiente (en paralelo, sin ver a los demás).
-    2. Cada miembro revisa críticamente la respuesta anonimizada de los demás.
+    2. Cada miembro revisa críticamente, en una sola llamada, las respuestas anonimizadas
+       de los demás.
     3. El presidente integra borradores y revisiones en una respuesta final que expone
        consensos, discrepancias y cuestiones pendientes de verificación humana.
     """
@@ -37,12 +38,14 @@ class Consejo:
         self.miembros = miembros
         self.presidente = presidente or miembros[0]
         self.registro = registro
+        # Los autores se anonimizan para que nadie favorezca (ni penalice) una respuesta por su origen.
+        self.alias = {m.nombre: f"Miembro {chr(65 + i)}" for i, m in enumerate(miembros)}
 
     def deliberar(self, tarea: str, documento: str | None = None, modo: str = "general") -> Resultado:
         if modo not in prompts.MODOS:
             raise ValueError(f"Modo desconocido: {modo}. Opciones: {', '.join(prompts.MODOS)}")
         contexto = {
-            "modo": prompts.MODOS[modo],
+            "modo": prompts.MODOS[modo][1],
             "tarea": tarea,
             "documento": prompts.bloque_documento(documento),
         }
@@ -62,21 +65,21 @@ class Consejo:
         self.registro("Fase 2/3 · Revisión cruzada…")
         encargos = {}
         for revisor in self.miembros:
-            for autor in self.miembros:
-                if autor is revisor:
-                    continue
-                msg = prompts.FASE_REVISION_CRUZADA.format(
-                    **contexto, respuesta=resultado.borradores[autor.nombre]
-                )
-                encargos[f"{revisor.nombre} → {autor.nombre}"] = (revisor, msg)
+            respuestas = "\n\n".join(
+                f"### Respuesta de {self.alias[autor.nombre]}\n<<<\n{resultado.borradores[autor.nombre]}\n>>>"
+                for autor in self.miembros
+                if autor is not revisor
+            )
+            msg = prompts.FASE_REVISION_CRUZADA.format(**contexto, respuestas=respuestas)
+            encargos[revisor.nombre] = (revisor, msg)
         resultado.revisiones = self._en_paralelo(encargos)
 
         self.registro(f"Fase 3/3 · Síntesis del presidente ({self.presidente.nombre})…")
-        materiales = self._materiales(resultado)
         resultado.sintesis = self.presidente.preguntar(
             prompts.PRINCIPIOS,
-            prompts.FASE_SINTESIS.format(**contexto, materiales=materiales),
+            prompts.FASE_SINTESIS.format(**contexto, materiales=self._materiales(resultado)),
         )
+        self.registro("Deliberación terminada.")
         return resultado
 
     def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]]) -> dict[str, str]:
@@ -88,14 +91,12 @@ class Consejo:
             return {clave: futuro.result() for clave, futuro in futuros.items()}
 
     def _materiales(self, r: Resultado) -> str:
-        # Se anonimizan los autores para que el presidente no favorezca su propia respuesta.
-        alias = {m.nombre: f"Miembro {chr(65 + i)}" for i, m in enumerate(self.miembros)}
-        partes = []
-        for nombre, texto in r.borradores.items():
-            partes.append(f"### Borrador de {alias[nombre]}\n<<<\n{texto}\n>>>")
-        for clave, texto in r.revisiones.items():
-            revisor, autor = clave.split(" → ")
-            partes.append(
-                f"### Revisión de {alias[revisor]} sobre {alias[autor]}\n<<<\n{texto}\n>>>"
-            )
+        partes = [
+            f"### Borrador de {self.alias[nombre]}\n<<<\n{texto}\n>>>"
+            for nombre, texto in r.borradores.items()
+        ]
+        partes += [
+            f"### Revisión de {self.alias[revisor]} sobre los demás miembros\n<<<\n{texto}\n>>>"
+            for revisor, texto in r.revisiones.items()
+        ]
         return "\n\n".join(partes)

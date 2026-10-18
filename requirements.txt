@@ -1,4 +1,6 @@
 anthropic>=0.40
 openai>=1.66
+perplexityai>=0.44
+flask>=3.0
 python-docx>=1.1
 pypdf>=4.0
