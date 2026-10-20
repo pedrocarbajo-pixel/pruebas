@@ -10,11 +10,13 @@ import os
 import tempfile
 import threading
 import uuid
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
+from .config import cargar_env
 from .informe import leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
@@ -139,6 +141,11 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
 
 
 if __name__ == "__main__":
+    cargar_env()
     host = os.getenv("COUNCIL_HOST", "127.0.0.1")
     puerto = int(os.getenv("COUNCIL_PORT", "8000"))
+    direccion = f"http://{host}:{puerto}"
+    print(f"Consejo de LLM disponible en {direccion}  (Ctrl+C para detenerlo)")
+    if os.getenv("COUNCIL_ABRIR_NAVEGADOR", "1") == "1":
+        threading.Timer(1.5, webbrowser.open, args=[direccion]).start()
     crear_app(os.getenv("COUNCIL_SALIDAS", "salidas")).run(host=host, port=puerto, threaded=True)

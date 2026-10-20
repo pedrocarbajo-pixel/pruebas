@@ -38,14 +38,34 @@ Para casos críticos (cuantía o riesgo muy elevados) puede activarse el **nivel
 - Es notablemente más lento y costoso: úselo solo cuando el caso lo justifique.
 - Revise periódicamente qué modelo es el más capaz de cada proveedor y actualice las variables `*_EXTREMO`.
 
-## Instalación
+## Puesta en marcha en su ordenador
+
+**Requisitos:** Python 3.10 o superior (en Windows, al instalarlo desde python.org, marque «Add python.exe to PATH») y, como mínimo, dos claves de API.
+
+1. Descargue el proyecto (rama `claude/consejo-llm`) en una carpeta.
+2. Ejecute el iniciador con doble clic o desde una terminal:
+   - **Windows:** `iniciar.bat`
+   - **macOS / Linux:** `./iniciar.sh`
+3. La primera vez instala lo necesario y crea el archivo `.env`. Ábralo con un editor de texto, pegue sus claves (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `PERPLEXITY_API_KEY`) y guárdelo.
+4. Vuelva a ejecutar el iniciador. Comprobará cada proveedor con una llamada mínima y, si al menos dos responden, abrirá la aplicación en el navegador (`http://127.0.0.1:8000`).
+
+Para detener la aplicación, cierre la ventana de la terminal o pulse Ctrl+C.
+
+### Verificación manual
+
+```bash
+python -m council.verificar            # nivel estándar
+python -m council.verificar --extremo  # comprueba también los modelos del nivel extremo
+```
+
+Cada línea indica `[ OK ]`, `[FALLO]` (con la causa probable y cómo resolverla) o `[ -- ]` (sin clave).
+
+### Instalación manual (alternativa al iniciador)
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # rellene las claves y exporte las variables, p. ej.: set -a; . ./.env; set +a
+cp .env.example .env      # rellene las claves; se cargan automáticamente al arrancar
 ```
-
-Basta con dos de las tres claves; los miembros sin clave aparecen desactivados en la web.
 
 ## Interfaz web
 

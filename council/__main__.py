@@ -14,6 +14,7 @@ import argparse
 import sys
 from functools import partial
 
+from .config import cargar_env
 from .informe import leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="sustituye DNI, NIE, CIF, IBAN, correos y teléfonos antes de enviar")
     p.add_argument("--salida", default="salidas", help="carpeta de resultados")
     args = p.parse_args(argv)
+    cargar_env()
 
     salida = ejecutar(
         tarea=args.tarea,

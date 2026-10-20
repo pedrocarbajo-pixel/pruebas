@@ -264,3 +264,59 @@ def test_web_valida_nivel(tmp_path):
     r = cliente.post("/api/consultas", data={"tarea": "T", "nivel": "maximo",
                                              "miembros": ["claude", "chatgpt"], "presidente": "claude"})
     assert r.status_code == 400
+
+
+def test_cargar_env(tmp_path, monkeypatch):
+    from council.config import cargar_env
+
+    for var in ("CLAVE_A", "CLAVE_B", "CLAVE_VACIA", "CLAVE_EXISTENTE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("CLAVE_EXISTENTE", "del-entorno")
+    env = tmp_path / ".env"
+    env.write_text('# comentario\nCLAVE_A=uno\nexport CLAVE_B="dos"\nCLAVE_VACIA=\n'
+                   'CLAVE_EXISTENTE=del-archivo\nlinea sin igual\n', encoding="utf-8")
+    assert sorted(cargar_env(env)) == ["CLAVE_A", "CLAVE_B"]
+    import os
+    assert os.environ["CLAVE_A"] == "uno" and os.environ["CLAVE_B"] == "dos"
+    assert os.environ["CLAVE_EXISTENTE"] == "del-entorno"  # el entorno tiene prioridad
+    assert cargar_env(tmp_path / "no-existe") == []
+
+
+def test_verificar(monkeypatch):
+    from council.verificar import verificar
+
+    class Roto(MiembroFalso):
+        def preguntar(self, sistema, mensaje):
+            raise RuntimeError("modelo no encontrado")
+
+    monkeypatch.setenv("CLAVE_OK", "x")
+    monkeypatch.setenv("CLAVE_ROTA", "x")
+    monkeypatch.delenv("CLAVE_FALTA", raising=False)
+    fabricas = {
+        "claude": lambda nivel: MiembroFalso("Claude"),
+        "chatgpt": lambda nivel: Roto("ChatGPT"),
+        "perplexity": lambda nivel: MiembroFalso("Perplexity"),
+    }
+    claves = {"claude": "CLAVE_OK", "chatgpt": "CLAVE_ROTA", "perplexity": "CLAVE_FALTA"}
+    lineas = []
+    assert verificar(["estandar"], fabricas, claves, escribir=lineas.append) == 1
+    texto = "\n".join(lineas)
+    assert "[ OK ] Claude" in texto and "[FALLO] ChatGPT" in texto and "modelo no encontrado" in texto
+    assert "error inesperado" in texto
+    assert "[ -- ] Perplexity: sin clave" in texto and "Hacen falta al menos dos" in texto
+
+    monkeypatch.setenv("CLAVE_FALTA", "x")
+    lineas.clear()
+    assert verificar(["estandar", "extremo"], fabricas, claves, escribir=lineas.append) == 2
+    assert "Consejo operativo con 2 miembros" in lineas[-1]
+
+
+@pytest.mark.parametrize("estado,pista", [(401, "clave de API no es válida"), (404, "modelo indicado no existe"),
+                                          (429, "límite de peticiones"), (400, "ha rechazado la petición")])
+def test_explicar_errores(estado, pista):
+    from council.verificar import _explicar
+
+    class ErrorApi(Exception):
+        status_code = estado
+
+    assert pista in _explicar(ErrorApi("x"))
