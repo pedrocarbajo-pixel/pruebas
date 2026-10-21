@@ -190,14 +190,15 @@ class RespuestasOpenAIFalsas:
 
 def test_extremo_openai_rebaja_esfuerzo_no_admitido(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    monkeypatch.delenv("OPENAI_MODEL_EXTREMO", raising=False)
     miembro = MiembroOpenAI(nivel="extremo")
     falsas = RespuestasOpenAIFalsas()
     miembro._cliente = NS(responses=falsas)
-    assert miembro.modelo == "gpt-5.5-pro"
+    assert miembro.modelo == "gpt-6-astra"
     assert miembro.preguntar("s", "m") == "ok" and miembro.preguntar("s", "m") == "ok"
     esfuerzos = [p["reasoning"]["effort"] for p in falsas.peticiones]
     assert esfuerzos == ["max", "xhigh", "xhigh"]  # el nivel rebajado se mantiene
-    assert miembro.descripcion() == "gpt-5.5-pro · esfuerzo xhigh · búsqueda web"
+    assert miembro.descripcion() == "gpt-6-astra · esfuerzo xhigh · búsqueda web"
 
 
 def test_estandar_openai_sin_esfuerzo(monkeypatch):
@@ -446,6 +447,7 @@ def test_claude_busqueda_web_con_fuentes_y_pausa(monkeypatch):
 
 def test_openai_busqueda_rechazada_se_desactiva(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
     monkeypatch.setenv("BUSQUEDA_DOMINIOS", "boe.es")
     peticiones = []
 
@@ -462,7 +464,7 @@ def test_openai_busqueda_rechazada_se_desactiva(monkeypatch):
     texto = miembro.preguntar("s", "m")
     assert peticiones[0]["tools"] == [{"type": "web_search", "filters": {"allowed_domains": ["boe.es"]}}]
     assert "tools" not in peticiones[-1] and "[BOE](https://www.boe.es/x)" in texto
-    assert miembro.descripcion() == "gpt-5 · sin búsqueda web (rechazada por el proveedor)"
+    assert miembro.descripcion() == "gpt-6.1-sol · sin búsqueda web (rechazada por el proveedor)"
 
 
 def test_instrucciones_normas_recientes():
@@ -473,3 +475,52 @@ def test_instrucciones_normas_recientes():
     texto = prompts.sistema()
     assert date.today().strftime("%d/%m/%Y") in texto
     assert "NUNCA afirmes que no existe" in texto
+
+
+class ModeloNoEncontrado(Exception):
+    status_code = 404
+
+
+def test_cadena_de_modelos_de_reserva(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-futuro, gpt-6-sol")
+    monkeypatch.setenv("BUSQUEDA_WEB", "1")
+    modelos_pedidos = []
+
+    def create(**parametros):
+        modelos_pedidos.append(parametros["model"])
+        if parametros["model"] == "gpt-futuro":
+            raise ModeloNoEncontrado("The model `gpt-futuro` does not exist")
+        return NS(output_text="ok", output=[])
+
+    miembro = MiembroOpenAI()
+    miembro._cliente = NS(responses=NS(create=create))
+    assert miembro.preguntar("s", "m") == "ok" and miembro.preguntar("s", "m") == "ok"
+    # Se descarta el modelo inexistente sin desactivar la búsqueda, y no se vuelve a pedir.
+    assert modelos_pedidos == ["gpt-futuro", "gpt-6-sol", "gpt-6-sol"]
+    assert miembro.busqueda and miembro.descripcion() == (
+        "gpt-6-sol · búsqueda web · sustituye a gpt-futuro (no disponible)")
+
+
+def test_cadena_agotada_propaga_error(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    monkeypatch.setenv("OPENAI_MODEL", "solo-este")
+    monkeypatch.setenv("BUSQUEDA_WEB", "0")
+
+    def create(**_):
+        raise ModeloNoEncontrado("model not found")
+
+    miembro = MiembroOpenAI()
+    miembro._cliente = NS(responses=NS(create=create))
+    with pytest.raises(ModeloNoEncontrado):
+        miembro.preguntar("s", "m")
+
+
+def test_modelos_por_defecto(monkeypatch):
+    from council.modelos import candidatos
+
+    for var in ("CLAUDE_MODEL", "OPENAI_MODEL", "OPENAI_MODEL_EXTREMO"):
+        monkeypatch.delenv(var, raising=False)
+    assert candidatos("claude", "estandar") == ["claude-opus-5-5"]
+    assert candidatos("chatgpt", "estandar")[0] == "gpt-6.1-sol"
+    assert candidatos("chatgpt", "extremo")[0] == "gpt-6-astra"

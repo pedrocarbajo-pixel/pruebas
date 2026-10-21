@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .modelos import candidatos
+
 NIVELES = ("estandar", "extremo")
 
 
@@ -43,6 +45,17 @@ def _con_reintentos(funcion, intentos: int = 3, espera: float = 2.0):
             time.sleep(espera * 2 ** (intento - 1))
 
 
+def _modelo_no_disponible(error: Exception) -> bool:
+    """El proveedor indica que el modelo no existe o que la cuenta no tiene acceso a él."""
+    estado = getattr(error, "status_code", None)
+    texto = str(error).lower()
+    if estado == 404:
+        return True
+    return estado in (400, 403) and any(p in texto for p in ("model", "preset")) and any(
+        p in texto for p in ("not found", "does not exist", "not exist", "invalid", "no access",
+                             "not have access", "unknown", "unsupported", "not supported"))
+
+
 def _busqueda_activa() -> bool:
     return os.getenv("BUSQUEDA_WEB", "1") == "1"
 
@@ -63,9 +76,10 @@ def anexar_fuentes(texto: str, fuentes: dict[str, str], nombre: str) -> str:
 
 
 class _ConEsfuerzo:
-    """Gestiona la escala descendente de esfuerzos del nivel extremo y la búsqueda web."""
+    """Gestiona la cadena de modelos de reserva, la escala de esfuerzos y la búsqueda web."""
 
     esfuerzos: list[str | None]
+    candidatos: list[str]
     busqueda: bool = False
     busqueda_rechazada: bool = False
 
@@ -83,19 +97,31 @@ class _ConEsfuerzo:
             try:
                 return _con_reintentos(lambda: llamada(self.esfuerzo))
             except Exception as e:
-                if not _es_error_de_peticion(e) or self._indice == len(self.esfuerzos) - 1:
+                if (not _es_error_de_peticion(e) or _modelo_no_disponible(e)
+                        or self._indice == len(self.esfuerzos) - 1):
                     raise
                 self._indice += 1  # se mantiene el nivel rebajado para el resto de llamadas
 
+    def _iniciar_modelos(self, candidatos: list[str]) -> None:
+        self.candidatos = candidatos
+        self.descartados: list[str] = []
+        self.modelo = candidatos[0]
+
     def _ejecutar(self, llamada):
-        """Como `_con_esfuerzo`, pero si el proveedor rechaza la búsqueda web la desactiva y reintenta."""
-        try:
-            return self._con_esfuerzo(llamada)
-        except Exception as e:
-            if not (self.busqueda and _es_error_de_peticion(e)):
-                raise
-            self.busqueda, self.busqueda_rechazada, self._indice = False, True, 0
-            return self._con_esfuerzo(llamada)
+        """Como `_con_esfuerzo`, con dos recursos ante rechazos del proveedor:
+        pasar al siguiente modelo de la cadena y, si rechaza la búsqueda web, seguir sin ella."""
+        while True:
+            try:
+                return self._con_esfuerzo(llamada)
+            except Exception as e:
+                restantes = self.candidatos[self.candidatos.index(self.modelo) + 1:]
+                if _modelo_no_disponible(e) and restantes:
+                    self.descartados.append(self.modelo)
+                    self.modelo, self._indice = restantes[0], 0
+                elif self.busqueda and _es_error_de_peticion(e):
+                    self.busqueda, self.busqueda_rechazada, self._indice = False, True, 0
+                else:
+                    raise
 
     def descripcion(self) -> str:
         partes = [self.modelo]
@@ -105,6 +131,8 @@ class _ConEsfuerzo:
             partes.append("búsqueda web")
         elif self.busqueda_rechazada:
             partes.append("sin búsqueda web (rechazada por el proveedor)")
+        if getattr(self, "descartados", None):
+            partes.append(f"sustituye a {', '.join(self.descartados)} (no disponible)")
         return " · ".join(partes)
 
 
@@ -124,10 +152,7 @@ class MiembroClaude(_ConEsfuerzo):
         import anthropic
 
         extremo = self.nivel == "extremo"
-        self.modelo = self.modelo or (
-            os.getenv("CLAUDE_MODEL_EXTREMO", "claude-opus-5-5") if extremo
-            else os.getenv("CLAUDE_MODEL", "claude-opus-5-5")
-        )
+        self._iniciar_modelos([self.modelo] if self.modelo else candidatos("claude", self.nivel))
         self.max_tokens = 64000 if extremo else 16000
         self._iniciar_esfuerzo(
             _esfuerzos_extremo("CLAUDE_ESFUERZO_EXTREMO", "max,xhigh,high") if extremo else [None]
@@ -186,10 +211,7 @@ class MiembroOpenAI(_ConEsfuerzo):
         import openai
 
         extremo = self.nivel == "extremo"
-        self.modelo = self.modelo or (
-            os.getenv("OPENAI_MODEL_EXTREMO", "gpt-5.5-pro") if extremo
-            else os.getenv("OPENAI_MODEL", "gpt-5")
-        )
+        self._iniciar_modelos([self.modelo] if self.modelo else candidatos("chatgpt", self.nivel))
         self._iniciar_esfuerzo(
             _esfuerzos_extremo("OPENAI_ESFUERZO_EXTREMO", "max,xhigh,high") if extremo else [None]
         )
@@ -239,10 +261,7 @@ class MiembroPerplexity(_ConEsfuerzo):
         import perplexity
 
         self.extremo = self.nivel == "extremo"
-        self.modelo = self.modelo or (
-            os.getenv("PERPLEXITY_PRESET_EXTREMO", "sonar-reasoning") if self.extremo
-            else os.getenv("PERPLEXITY_PRESET", "sonar-pro")
-        )
+        self._iniciar_modelos([self.modelo] if self.modelo else candidatos("perplexity", self.nivel))
         self._iniciar_esfuerzo(
             _esfuerzos_extremo("PERPLEXITY_ESFUERZO_EXTREMO", "xhigh,high") if self.extremo
             else [None]
