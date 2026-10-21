@@ -123,8 +123,21 @@
     <div class="acciones">
       <a id="bajar-informe" class="boton" href="#">Descargar informe (.md)</a>
       <a id="bajar-registro" class="boton secundario" href="#">Descargar registro de auditoría (.json)</a>
+      <a class="boton secundario" href="#refinar">Pedir una versión corregida</a>
     </div>
     <article id="informe"></article>
+  </section>
+
+  <section id="refinar" class="panel" hidden>
+    <label for="instrucciones" style="margin-top:0">Solicitar una versión corregida</label>
+    <textarea id="instrucciones" name="instrucciones"
+      placeholder="Ej.: Incorpora las citas concretas de la Ley del IRPF, elimina las afirmaciones que no puedan verificarse y añade un ejemplo numérico."></textarea>
+    <div class="ayuda">El presidente redacta una nueva versión completa con sus indicaciones, a partir de los borradores y revisiones del consejo. La versión anterior se conserva en el historial del informe.</div>
+    <div class="acciones">
+      <button id="enviar-refinar" type="button">Generar versión corregida</button>
+      <span id="version" class="ayuda"></span>
+    </div>
+    <p id="error-refinar" class="error" hidden></p>
   </section>
 </main>
 
@@ -184,17 +197,48 @@ async function seguir(id) {
   if (r.estado === "en_curso") return setTimeout(() => seguir(id), 2500);
 
   $("enviar").disabled = false;
+  $("enviar-refinar").disabled = false;
   if (r.estado === "error") {
     $("estado").textContent = "La deliberación ha fallado.";
     return mostrarError(r.error);
   }
-  $("estado").textContent = "Deliberación terminada.";
+  $("estado").textContent = r.error ? "No se pudo generar la nueva versión." : "Trabajo terminado.";
+  $("error-refinar").textContent = r.error || "";
+  $("error-refinar").hidden = !r.error;
+  $("version").textContent = `Versión actual: ${r.version}`;
+  $("refinar").hidden = false;
+  if (!r.error) $("instrucciones").value = "";
   $("informe").innerHTML = pintarMarkdown(r.informe);
   $("bajar-informe").href = `/api/consultas/${id}/informe`;
   $("bajar-registro").href = `/api/consultas/${id}/registro`;
   $("resultado").hidden = false;
   $("resultado").scrollIntoView({ behavior: "smooth" });
 }
+
+let consultaActual = null;
+
+$("enviar-refinar").addEventListener("click", async () => {
+  const instrucciones = $("instrucciones").value.trim();
+  if (!instrucciones) {
+    $("error-refinar").textContent = "Escriba qué debe cambiar en la nueva versión.";
+    $("error-refinar").hidden = false;
+    return;
+  }
+  $("enviar-refinar").disabled = true;
+  $("error-refinar").hidden = true;
+  const datos = new FormData();
+  datos.append("instrucciones", instrucciones);
+  const r = await fetch(`/api/consultas/${consultaActual}/refinar`, { method: "POST", body: datos });
+  if (!r.ok) {
+    $("enviar-refinar").disabled = false;
+    $("error-refinar").textContent = (await r.json()).error;
+    $("error-refinar").hidden = false;
+    return;
+  }
+  $("estado").textContent = "Generando la versión corregida…";
+  $("progreso").scrollIntoView({ behavior: "smooth" });
+  seguir(consultaActual);
+});
 
 $("nivel").addEventListener("change", () => {
   $("aviso-extremo").hidden = $("nivel").value !== "extremo";
@@ -207,6 +251,7 @@ $("formulario").addEventListener("submit", async (e) => {
                "Es mucho más lento y costoso. ¿Desea continuar?")) return;
   mostrarError("");
   $("resultado").hidden = true;
+  $("refinar").hidden = true;
   $("enviar").disabled = true;
   const r = await fetch("/api/consultas", { method: "POST", body: new FormData(e.target) });
   const datos = await r.json();
@@ -217,6 +262,7 @@ $("formulario").addEventListener("submit", async (e) => {
   $("estado").textContent = "Deliberando… (puede tardar varios minutos)";
   $("mensajes").innerHTML = "";
   $("progreso").hidden = false;
+  consultaActual = datos.id;
   seguir(datos.id);
 });
 

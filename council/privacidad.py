@@ -18,10 +18,13 @@ PATRONES = {
 }
 
 
-def seudonimizar(texto: str) -> tuple[str, dict[str, str]]:
-    """Sustituye los datos detectados por marcadores [TIPO_n] y devuelve el mapa inverso."""
-    mapa: dict[str, str] = {}
-    vistos: dict[str, str] = {}
+def seudonimizar(texto: str, mapa: dict[str, str] | None = None) -> tuple[str, dict[str, str]]:
+    """Sustituye los datos detectados por marcadores [TIPO_n] y devuelve el mapa inverso.
+
+    Si se pasa un `mapa` previo, se reutilizan sus marcadores y se continúa su numeración.
+    """
+    mapa = dict(mapa or {})
+    vistos: dict[str, str] = {valor: marcador for marcador, valor in mapa.items()}
     for tipo, patron in PATRONES.items():
         def sustituir(m: re.Match) -> str:
             valor = m.group(0)

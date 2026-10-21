@@ -75,6 +75,8 @@ python -m council.web     # abra http://127.0.0.1:8000
 
 Permite escribir la tarea, adjuntar un documento (.txt, .md, .docx o .pdf), elegir el tipo de trabajo, los miembros y el presidente, y seudonimizar datos. Muestra el progreso de cada fase, el informe y botones para descargar el informe y el registro de auditoría.
 
+**Versiones corregidas:** debajo del informe hay un campo «Solicitar una versión corregida». Escriba sus indicaciones (por ejemplo, «incorpora las citas concretas de la Ley del IRPF») y el presidente redactará una nueva versión completa a partir de los borradores y revisiones del consejo. Cada versión se guarda en un archivo propio (`_v2`, `_v3`…) y las anteriores quedan en el «Anexo III · Historial de versiones». Si la consulta se lanzó con seudonimización, las indicaciones también se seudonimizan.
+
 **Seguridad:** el servidor no tiene autenticación y escucha solo en `127.0.0.1`. No lo exponga en una red sin colocar delante un proxy con autenticación y HTTPS. Las librerías de la página se sirven localmente, sin peticiones a CDN externas.
 
 ## Línea de órdenes

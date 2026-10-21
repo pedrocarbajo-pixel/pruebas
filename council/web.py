@@ -20,7 +20,7 @@ from .config import cargar_env
 from .informe import leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
-from .servicio import FABRICAS, ejecutar
+from .servicio import FABRICAS, ejecutar, refinar
 
 CLAVES_API = {
     "claude": "ANTHROPIC_API_KEY",
@@ -114,6 +114,37 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
         threading.Thread(target=trabajo, daemon=True).start()
         return jsonify(id=id_consulta), 202
 
+    @app.post("/api/consultas/<id_consulta>/refinar")
+    def refinar_consulta(id_consulta: str):
+        instrucciones = request.form.get("instrucciones", "").strip()
+        with cerrojo:
+            estado = consultas.get(id_consulta)
+            if estado is None:
+                abort(404)
+            if not instrucciones:
+                return jsonify(error="Escriba qué debe cambiar en la nueva versión."), 400
+            if estado["estado"] == "en_curso" or not estado["salida"]:
+                return jsonify(error="Espere a que termine el trabajo en curso."), 409
+            estado.update(estado="en_curso", error=None)
+            salida = estado["salida"]
+
+        def anotar(mensaje: str) -> None:
+            with cerrojo:
+                estado["mensajes"].append(f"{datetime.now():%H:%M:%S} · {mensaje}")
+
+        def trabajo() -> None:
+            try:
+                refinar(salida, instrucciones, registro=anotar, fabricas=fabricas)
+                with cerrojo:
+                    estado.update(estado="terminada")
+            except Exception as e:  # se conserva la versión anterior y se informa del fallo
+                with cerrojo:
+                    estado.update(estado="terminada",
+                                  error=f"No se pudo generar la nueva versión. {type(e).__name__}: {e}")
+
+        threading.Thread(target=trabajo, daemon=True).start()
+        return jsonify(id=id_consulta), 202
+
     @app.get("/api/consultas/<id_consulta>")
     def ver_consulta(id_consulta: str):
         with cerrojo:
@@ -125,6 +156,7 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
             if estado["salida"]:
                 respuesta["informe"] = estado["salida"].informe.read_text(encoding="utf-8")
                 respuesta["seudonimizados"] = estado["salida"].datos_seudonimizados
+                respuesta["version"] = len(estado["salida"].resultado.versiones) + 1
         return jsonify(respuesta)
 
     @app.get("/api/consultas/<id_consulta>/<tipo>")

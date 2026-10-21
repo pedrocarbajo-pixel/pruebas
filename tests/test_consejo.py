@@ -23,6 +23,8 @@ class MiembroFalso:
     def preguntar(self, sistema, mensaje):
         with self._cerrojo:
             self.llamadas.append(mensaje)
+        if "INDICACIONES DEL USUARIO" in mensaje:
+            return f"## Respuesta final\nVersión corregida por {self.nombre}"
         if "PRESIDENTE" in mensaje:
             return f"## Respuesta final\nSíntesis de {self.nombre}: {mensaje[-60:]}"
         if "Respuesta de Miembro" in mensaje:
@@ -320,3 +322,82 @@ def test_explicar_errores(estado, pista):
         status_code = estado
 
     assert pista in _explicar(ErrorApi("x"))
+
+
+def test_principios_prohiben_ofrecimientos():
+    from council import prompts
+
+    assert "No hagas preguntas al usuario ni ofrezcas ampliaciones" in prompts.sistema()
+
+
+def test_refinar_resultado():
+    from council.consejo import refinar
+
+    (a, _, _), consejo = consejo_de_tres()
+    r = consejo.deliberar("Informe IRPF", "Doc", modo="informe_tributario")
+    original = r.sintesis
+    refinar(a, r, "Añade citas concretas", "Doc")
+    assert r.sintesis == "## Respuesta final\nVersión corregida por Claude"
+    assert r.versiones[0]["sintesis"] == original
+    assert r.versiones[0]["instrucciones"] == "Añade citas concretas"
+    peticion = a.llamadas[-1]
+    # El presidente recibe todo el material anonimizado, su versión vigente y las indicaciones.
+    assert "### Borrador de Miembro B" in peticion and original in peticion
+    assert "Añade citas concretas" in peticion and "Doc" in peticion
+    with pytest.raises(ValueError):
+        refinar(a, r, "   ")
+
+
+def test_servicio_refinar_seudonimiza_y_versiona(tmp_path):
+    from council.servicio import refinar
+
+    enviados = []
+
+    class Espia(MiembroFalso):
+        def preguntar(self, sistema, mensaje):
+            enviados.append(mensaje)
+            return super().preguntar(sistema, mensaje)
+
+    fabricas = {"claude": lambda nivel: Espia("Claude"), "chatgpt": lambda nivel: Espia("ChatGPT")}
+    salida = ejecutar("Cliente DNI 12345678Z", seudonimizar=True, carpeta=tmp_path,
+                      registro=lambda *_: None, fabricas=fabricas)
+    primero = salida.informe
+    refinar(salida, "Usa también el correo ana@ejemplo.es y el DNI 12345678Z", registro=lambda *_: None,
+            fabricas=fabricas)
+    # Ni las indicaciones ni el resto del material salen con datos reales.
+    assert "ana@ejemplo.es" not in enviados[-1] and "12345678Z" not in enviados[-1]
+    assert "[DNI_1]" in enviados[-1] and "[EMAIL_1]" in enviados[-1]
+    # La nueva versión se guarda aparte, con los datos restaurados y el historial.
+    assert salida.informe != primero and salida.informe.name.endswith("_v2.md") and primero.exists()
+    texto = salida.informe.read_text(encoding="utf-8")
+    assert "Versión corregida por Claude" in texto and "Anexo III · Historial de versiones" in texto
+    assert "ana@ejemplo.es" in texto and "**Versión:** 2" in texto
+    assert texto.count("\n## Respuesta final") == 1 and "\n#### Respuesta final" in texto
+    assert json.loads(salida.mapa.read_text(encoding="utf-8"))["[EMAIL_1]"] == "ana@ejemplo.es"
+
+
+def test_web_refinar(tmp_path):
+    cliente = crear_app(tmp_path, fabricas=fabricas_falsas()).test_client()
+
+    def esperar(id_consulta):
+        for _ in range(100):
+            estado = cliente.get(f"/api/consultas/{id_consulta}").get_json()
+            if estado["estado"] != "en_curso":
+                return estado
+            time.sleep(0.05)
+        raise AssertionError("no terminó")
+
+    r = cliente.post("/api/consultas", data={"tarea": "T", "miembros": ["claude", "chatgpt"],
+                                             "presidente": "claude"})
+    id_consulta = r.get_json()["id"]
+    assert esperar(id_consulta)["version"] == 1
+    assert cliente.post(f"/api/consultas/{id_consulta}/refinar", data={"instrucciones": ""}).status_code == 400
+    assert cliente.post("/api/consultas/otra/refinar", data={"instrucciones": "x"}).status_code == 404
+    r = cliente.post(f"/api/consultas/{id_consulta}/refinar", data={"instrucciones": "Más citas"})
+    assert r.status_code == 202
+    estado = esperar(id_consulta)
+    assert estado["version"] == 2 and estado["error"] is None
+    assert "Versión corregida por Claude" in estado["informe"]
+    assert any("Versión 2 terminada" in m for m in estado["mensajes"])
+    descarga = cliente.get(f"/api/consultas/{id_consulta}/informe")
+    assert "_v2" in descarga.headers["Content-Disposition"]

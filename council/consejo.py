@@ -21,6 +21,48 @@ class Resultado:
     fecha: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     modelos: dict[str, str] = field(default_factory=dict)
     nivel: str = "estandar"
+    # Versiones anteriores de la síntesis: {"fecha", "instrucciones", "sintesis"}
+    versiones: list[dict[str, str]] = field(default_factory=list)
+
+
+def materiales(r: Resultado) -> str:
+    """Borradores y revisiones con los autores anonimizados, en el orden de los miembros."""
+    alias = {nombre: f"Miembro {chr(65 + i)}" for i, nombre in enumerate(r.borradores)}
+    partes = [
+        f"### Borrador de {alias[nombre]}\n<<<\n{texto}\n>>>"
+        for nombre, texto in r.borradores.items()
+    ]
+    partes += [
+        f"### Revisión de {alias[revisor]} sobre los demás miembros\n<<<\n{texto}\n>>>"
+        for revisor, texto in r.revisiones.items()
+    ]
+    return "\n\n".join(partes)
+
+
+def refinar(presidente: Miembro, r: Resultado, instrucciones: str,
+            documento: str | None = None) -> Resultado:
+    """Pide al presidente una nueva versión de la síntesis según las indicaciones del usuario.
+
+    La versión vigente pasa al historial (`r.versiones`) y `r.sintesis` recibe la nueva.
+    """
+    if not instrucciones.strip():
+        raise ValueError("Indique qué debe cambiar en la nueva versión.")
+    mensaje = prompts.FASE_REFINAMIENTO.format(
+        modo=prompts.MODOS[r.modo][1],
+        tarea=r.tarea,
+        documento=prompts.bloque_documento(documento),
+        materiales=materiales(r),
+        sintesis=r.sintesis,
+        instrucciones=instrucciones,
+    )
+    nueva = presidente.preguntar(prompts.sistema(r.nivel), mensaje)
+    r.versiones.append({
+        "fecha": datetime.now(timezone.utc).isoformat(),
+        "instrucciones": instrucciones,
+        "sintesis": r.sintesis,
+    })
+    r.sintesis = nueva
+    return r
 
 
 class Consejo:
@@ -85,7 +127,7 @@ class Consejo:
         self.registro(f"Fase 3/3 · Síntesis del presidente ({self.presidente.nombre})…")
         resultado.sintesis = self.presidente.preguntar(
             self.sistema,
-            prompts.FASE_SINTESIS.format(**contexto, materiales=self._materiales(resultado)),
+            prompts.FASE_SINTESIS.format(**contexto, materiales=materiales(resultado)),
         )
         # Se anota al final porque el esfuerzo efectivo puede haberse rebajado durante la deliberación.
         resultado.modelos = {
@@ -102,14 +144,3 @@ class Consejo:
                 for clave, (miembro, mensaje) in encargos.items()
             }
             return {clave: futuro.result() for clave, futuro in futuros.items()}
-
-    def _materiales(self, r: Resultado) -> str:
-        partes = [
-            f"### Borrador de {self.alias[nombre]}\n<<<\n{texto}\n>>>"
-            for nombre, texto in r.borradores.items()
-        ]
-        partes += [
-            f"### Revisión de {self.alias[revisor]} sobre los demás miembros\n<<<\n{texto}\n>>>"
-            for revisor, texto in r.revisiones.items()
-        ]
-        return "\n\n".join(partes)

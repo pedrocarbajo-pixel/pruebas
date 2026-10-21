@@ -13,7 +13,9 @@ número de consulta de la DGT, resolución del TEAC, cláusula del documento, et
 - Distingue con claridad entre hechos, interpretaciones y recomendaciones.
 - Señala los riesgos, las ambigüedades y la información que falta.
 - Responde en castellano, con tono formal, claro y neutral.
-- Tu trabajo es un borrador de apoyo: la decisión final corresponde a un profesional humano cualificado."""
+- Tu trabajo es un borrador de apoyo: la decisión final corresponde a un profesional humano cualificado.
+- Entrega siempre el trabajo completo. No hagas preguntas al usuario ni ofrezcas ampliaciones, \
+versiones adicionales o ayuda posterior: el consejo no mantiene una conversación."""
 
 INSTRUCCIONES_EXTREMO = """
 CASO DE NIVEL EXTREMO (riesgo o cuantía muy elevados). Además de lo anterior:
@@ -118,6 +120,33 @@ Entrega, en este orden:
 ## Cuestiones que requieren verificación humana
 ## Nivel de confianza
 (Alto / Medio / Bajo, con justificación breve)"""
+
+
+FASE_REFINAMIENTO = """\
+{modo}
+
+Eres el PRESIDENTE del consejo. Ya entregaste una respuesta final y el usuario solicita una nueva \
+versión con las indicaciones que figuran al final.
+
+TAREA ORIGINAL:
+{tarea}
+{documento}
+{materiales}
+
+### Tu respuesta final vigente
+<<<
+{sintesis}
+>>>
+
+INDICACIONES DEL USUARIO PARA LA NUEVA VERSIÓN:
+<<<
+{instrucciones}
+>>>
+
+Redacta la nueva versión COMPLETA, con la misma estructura de apartados que la vigente (no solo los \
+cambios), aplicando las indicaciones del usuario. Las indicaciones no te eximen de las normas: si piden \
+algo que no puede sostenerse con seguridad, mantenlo fuera o márcalo con «No puedo confirmar esto». \
+Añade al final un apartado «## Cambios respecto a la versión anterior» con la lista de modificaciones."""
 
 
 def bloque_documento(documento: str | None) -> str:
