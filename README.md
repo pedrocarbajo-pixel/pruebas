@@ -31,7 +31,7 @@ Para casos críticos (cuantía o riesgo muy elevados) puede activarse el **nivel
 |---|---|---|
 | Claude | `claude-opus-5-5` | `claude-opus-5-5`, razonamiento adaptativo, esfuerzo `max` → `xhigh` → `high`, hasta 64 000 tokens de salida |
 | ChatGPT | `gpt-6.1-sol` (reserva: `gpt-6-sol`, `gpt-5`) | `gpt-6-astra` (reserva: `gpt-6.1-sol`, `gpt-5.5-pro`), esfuerzo `max` → `xhigh` → `high` |
-| Perplexity | `sonar-pro` | `sonar-reasoning`, esfuerzo `xhigh` → `high`, búsqueda con contexto amplio |
+| Perplexity | `sonar-pro` (reserva: `fast`) | `high`, investigación profunda (reserva: `low`, `sonar-pro`), esfuerzo `xhigh` → `high`, búsqueda con contexto amplio |
 
 - Si la API de un proveedor rechaza un nivel de esfuerzo, se prueba automáticamente el siguiente inferior, y el informe indica el modelo y el esfuerzo **efectivamente** utilizados.
 - Los miembros reciben además instrucciones de máximo rigor: todas las interpretaciones razonables, doble comprobación de citas y escenarios de peor caso.

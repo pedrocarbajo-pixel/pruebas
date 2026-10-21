@@ -23,9 +23,11 @@ MODELOS: dict[str, dict[str, list[str]]] = {
         "estandar": ["gpt-6.1-sol", "gpt-6-sol", "gpt-5"],
         "extremo": ["gpt-6-astra", "gpt-6.1-sol", "gpt-5.5-pro"],
     },
-    "perplexity": {  # presets de la Agent API de Perplexity
-        "estandar": ["sonar-pro"],
-        "extremo": ["sonar-reasoning", "sonar-pro"],
+    # Presets de la Agent API de Perplexity. Según su guía de migración, «high» equivale a
+    # Sonar Deep Research y «low» a Sonar Reasoning Pro; «fast», a Sonar Pro.
+    "perplexity": {
+        "estandar": ["sonar-pro", "fast"],
+        "extremo": ["high", "low", "sonar-pro"],
     },
 }
 
