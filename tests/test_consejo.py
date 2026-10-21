@@ -185,7 +185,7 @@ class RespuestasOpenAIFalsas:
         self.peticiones.append(parametros)
         if parametros.get("reasoning", {}).get("effort") == "max":
             raise ErrorPeticion("effort no admitido")
-        return NS(output_text="ok")
+        return NS(output_text="ok", output=[])
 
 
 def test_extremo_openai_rebaja_esfuerzo_no_admitido(monkeypatch):
@@ -197,12 +197,13 @@ def test_extremo_openai_rebaja_esfuerzo_no_admitido(monkeypatch):
     assert miembro.preguntar("s", "m") == "ok" and miembro.preguntar("s", "m") == "ok"
     esfuerzos = [p["reasoning"]["effort"] for p in falsas.peticiones]
     assert esfuerzos == ["max", "xhigh", "xhigh"]  # el nivel rebajado se mantiene
-    assert miembro.descripcion() == "gpt-5.5-pro · esfuerzo xhigh"
+    assert miembro.descripcion() == "gpt-5.5-pro · esfuerzo xhigh · búsqueda web"
 
 
 def test_estandar_openai_sin_esfuerzo(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
     monkeypatch.setenv("OPENAI_MODEL", "modelo-normal")
+    monkeypatch.setenv("BUSQUEDA_WEB", "0")
     miembro = MiembroOpenAI()
     falsas = RespuestasOpenAIFalsas()
     miembro._cliente = NS(responses=falsas)
@@ -222,7 +223,8 @@ def test_extremo_claude_usa_esfuerzo_maximo_y_razonamiento(monkeypatch):
             return False
 
         def get_final_message(self):
-            return NS(content=[NS(type="thinking", text="(razonamiento)"), NS(type="text", text="ok")])
+            return NS(stop_reason="end_turn",
+                      content=[NS(type="thinking", text="(razonamiento)"), NS(type="text", text="ok")])
 
     def stream(**parametros):
         peticiones.append(parametros)
@@ -401,3 +403,73 @@ def test_web_refinar(tmp_path):
     assert any("Versión 2 terminada" in m for m in estado["mensajes"])
     descarga = cliente.get(f"/api/consultas/{id_consulta}/informe")
     assert "_v2" in descarga.headers["Content-Disposition"]
+
+
+def test_claude_busqueda_web_con_fuentes_y_pausa(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "clave-falsa")
+    monkeypatch.setenv("BUSQUEDA_DOMINIOS", "boe.es, hacienda.gob.es")
+    peticiones = []
+    respuestas = [
+        NS(stop_reason="pause_turn", content=[NS(type="text", text="Según el BOE, ", citations=None)]),
+        NS(stop_reason="end_turn", content=[NS(type="text", text="el RDL 29/2026 regula…", citations=[
+            NS(url="https://www.boe.es/buscar/act.php?id=BOE-A-2026-20823", title="RDL 29/2026")])]),
+    ]
+
+    class Flujo:
+        def __init__(self, r):
+            self.r = r
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_final_message(self):
+            return self.r
+
+    def stream(**parametros):
+        peticiones.append(parametros)
+        return Flujo(respuestas[len(peticiones) - 1])
+
+    miembro = MiembroClaude()
+    miembro._cliente = NS(messages=NS(stream=stream))
+    texto = miembro.preguntar("s", "m")
+    assert texto.startswith("Según el BOE, el RDL 29/2026 regula…")
+    assert "1. [RDL 29/2026](https://www.boe.es/buscar/act.php?id=BOE-A-2026-20823)" in texto
+    herramienta = peticiones[0]["tools"][0]
+    assert herramienta["name"] == "web_search" and herramienta["allowed_domains"] == ["boe.es", "hacienda.gob.es"]
+    # Tras la pausa se reenvía lo generado para que el modelo continúe.
+    assert peticiones[1]["messages"][-1]["role"] == "assistant"
+    assert miembro.descripcion() == "claude-opus-5-5 · búsqueda web"
+
+
+def test_openai_busqueda_rechazada_se_desactiva(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "clave-falsa")
+    monkeypatch.setenv("BUSQUEDA_DOMINIOS", "boe.es")
+    peticiones = []
+
+    def create(**parametros):
+        peticiones.append(parametros)
+        if "tools" in parametros:
+            raise ErrorPeticion("web_search no admitido por este modelo")
+        return NS(output_text="ok", output=[NS(type="message", content=[NS(annotations=[
+            NS(type="url_citation", url="https://www.boe.es/x", title="BOE")])])])
+
+    miembro = MiembroOpenAI()
+    miembro._cliente = NS(responses=NS(create=create))
+    assert peticiones == [] and miembro.busqueda
+    texto = miembro.preguntar("s", "m")
+    assert peticiones[0]["tools"] == [{"type": "web_search", "filters": {"allowed_domains": ["boe.es"]}}]
+    assert "tools" not in peticiones[-1] and "[BOE](https://www.boe.es/x)" in texto
+    assert miembro.descripcion() == "gpt-5 · sin búsqueda web (rechazada por el proveedor)"
+
+
+def test_instrucciones_normas_recientes():
+    from datetime import date
+
+    from council import prompts
+
+    texto = prompts.sistema()
+    assert date.today().strftime("%d/%m/%Y") in texto
+    assert "NUNCA afirmes que no existe" in texto

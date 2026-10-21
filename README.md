@@ -97,10 +97,16 @@ python -m council contrato_revisar "Revisa este contrato desde la posición del 
 - `registro_<fecha>.json`: registro completo de la deliberación, para auditoría.
 - `mapa_registro_<fecha>.json` (solo al seudonimizar): correspondencia entre marcadores y datos reales. **Custódielo** como información confidencial.
 
+## Búsqueda web y normas recientes
+
+Los modelos tienen una fecha de corte de conocimientos: no conocen normas publicadas después. Por eso los **tres miembros** pueden buscar en internet (`BUSQUEDA_WEB=1`), limitados a los dominios de `BUSQUEDA_DOMINIOS` (por defecto, fuentes oficiales: BOE, CENDOJ, AEAT, DGT, EUR-Lex…). Cada respuesta incluye la lista de fuentes consultadas. Si un proveedor rechaza la búsqueda, el miembro continúa sin ella y el informe lo indica.
+
+Para normas muy recientes o críticas, lo más fiable es **adjuntar su texto oficial** (PDF del BOE) como documento: tiene prioridad sobre lo que los modelos sepan.
+
 ## Perplexity
 
 - Usa la Agent API (`responses.create`) del SDK oficial `perplexityai` con el *preset* `PERPLEXITY_PRESET` (por defecto, `sonar-pro`).
-- Si define `PERPLEXITY_DOMINIOS`, su búsqueda se limita a esos dominios (en `.env.example` hay una lista de fuentes oficiales: BOE, CENDOJ, AEAT, DGT, EUR-Lex…).
+- Su búsqueda se limita a los dominios de `BUSQUEDA_DOMINIOS`, igual que la de los demás miembros.
 - Las fuentes consultadas se añaden a su respuesta para que el resto del consejo las contraste.
 
 ## Seudonimización

@@ -1,5 +1,7 @@
 """Instrucciones de sistema y plantillas de cada fase del consejo."""
 
+from datetime import date
+
 PRINCIPIOS = """\
 Eres miembro de un consejo de expertos que trabaja en tareas de alto riesgo o sensibilidad, \
 principalmente de Derecho español y de la Unión Europea, incluido el Derecho tributario.
@@ -25,8 +27,20 @@ CASO DE NIVEL EXTREMO (riesgo o cuantía muy elevados). Además de lo anterior:
 - Señala expresamente cualquier punto en el que un error tendría consecuencias graves."""
 
 
+NORMAS_RECIENTES = """
+Fecha de hoy: {hoy}. Tus conocimientos tienen una fecha de corte anterior, así que pueden existir normas, \
+sentencias o consultas posteriores que no conoces:
+- Si la tarea menciona una norma o resolución que no conoces, NUNCA afirmes que no existe ni la sustituyas \
+por otra parecida. Búscala con la búsqueda web en fuentes oficiales (BOE, boletines autonómicos, CENDOJ, \
+DGT, TEAC, EUR-Lex) y cita el enlace.
+- Si no puedes localizarla, dilo expresamente y recomienda adjuntar su texto oficial como documento.
+- Si el texto de la norma se adjunta como documento, ese texto prevalece sobre tus conocimientos previos."""
+
+
 def sistema(nivel: str = "estandar") -> str:
-    return PRINCIPIOS + (INSTRUCCIONES_EXTREMO if nivel == "extremo" else "")
+    hoy = date.today().strftime("%d/%m/%Y")
+    return (PRINCIPIOS + NORMAS_RECIENTES.format(hoy=hoy)
+            + (INSTRUCCIONES_EXTREMO if nivel == "extremo" else ""))
 
 
 MODOS = {

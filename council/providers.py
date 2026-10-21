@@ -43,10 +43,31 @@ def _con_reintentos(funcion, intentos: int = 3, espera: float = 2.0):
             time.sleep(espera * 2 ** (intento - 1))
 
 
+def _busqueda_activa() -> bool:
+    return os.getenv("BUSQUEDA_WEB", "1") == "1"
+
+
+def _dominios() -> list[str]:
+    """Dominios a los que se limita la búsqueda web (vacío = sin límite)."""
+    valor = os.getenv("BUSQUEDA_DOMINIOS") or os.getenv("PERPLEXITY_DOMINIOS", "")
+    return [d.strip() for d in valor.split(",") if d.strip()]
+
+
+def anexar_fuentes(texto: str, fuentes: dict[str, str], nombre: str) -> str:
+    """Añade al texto la lista de fuentes web consultadas ({url: título})."""
+    if not fuentes:
+        return texto
+    return texto + f"\n\n### Fuentes consultadas por {nombre}\n" + "\n".join(
+        f"{i}. [{titulo}]({url})" for i, (url, titulo) in enumerate(fuentes.items(), 1)
+    )
+
+
 class _ConEsfuerzo:
-    """Gestiona la escala descendente de esfuerzos del nivel extremo."""
+    """Gestiona la escala descendente de esfuerzos del nivel extremo y la búsqueda web."""
 
     esfuerzos: list[str | None]
+    busqueda: bool = False
+    busqueda_rechazada: bool = False
 
     def _iniciar_esfuerzo(self, esfuerzos: list[str | None]) -> None:
         self.esfuerzos = esfuerzos
@@ -66,8 +87,25 @@ class _ConEsfuerzo:
                     raise
                 self._indice += 1  # se mantiene el nivel rebajado para el resto de llamadas
 
+    def _ejecutar(self, llamada):
+        """Como `_con_esfuerzo`, pero si el proveedor rechaza la búsqueda web la desactiva y reintenta."""
+        try:
+            return self._con_esfuerzo(llamada)
+        except Exception as e:
+            if not (self.busqueda and _es_error_de_peticion(e)):
+                raise
+            self.busqueda, self.busqueda_rechazada, self._indice = False, True, 0
+            return self._con_esfuerzo(llamada)
+
     def descripcion(self) -> str:
-        return f"{self.modelo} · esfuerzo {self.esfuerzo}" if self.esfuerzo else self.modelo
+        partes = [self.modelo]
+        if self.esfuerzo:
+            partes.append(f"esfuerzo {self.esfuerzo}")
+        if self.busqueda:
+            partes.append("búsqueda web")
+        elif self.busqueda_rechazada:
+            partes.append("sin búsqueda web (rechazada por el proveedor)")
+        return " · ".join(partes)
 
 
 def _esfuerzos_extremo(variable: str, por_defecto: str) -> list[str | None]:
@@ -94,26 +132,48 @@ class MiembroClaude(_ConEsfuerzo):
         self._iniciar_esfuerzo(
             _esfuerzos_extremo("CLAUDE_ESFUERZO_EXTREMO", "max,xhigh,high") if extremo else [None]
         )
+        self.busqueda = _busqueda_activa()
         self._cliente = anthropic.Anthropic(timeout=3600 if extremo else 600)
 
     def preguntar(self, sistema: str, mensaje: str) -> str:
         def llamada(esfuerzo: str | None) -> str:
-            extra = {}
+            extra: dict = {}
             if esfuerzo:
                 extra = {"thinking": {"type": "adaptive"}, "output_config": {"effort": esfuerzo}}
-            # Se usa streaming porque las respuestas largas (contratos) pueden superar
-            # el tiempo máximo de una petición no transmitida.
-            with self._cliente.messages.stream(
-                model=self.modelo,
-                max_tokens=self.max_tokens,
-                system=sistema,
-                messages=[{"role": "user", "content": mensaje}],
-                **extra,
-            ) as flujo:
-                respuesta = flujo.get_final_message()
-            return "".join(b.text for b in respuesta.content if b.type == "text")
+            if self.busqueda:
+                herramienta = {"type": os.getenv("CLAUDE_WEB_SEARCH", "web_search_20250305"),
+                               "name": "web_search", "max_uses": 10}
+                if _dominios():
+                    herramienta["allowed_domains"] = _dominios()
+                extra["tools"] = [herramienta]
+            mensajes: list = [{"role": "user", "content": mensaje}]
+            textos: list[str] = []
+            fuentes: dict[str, str] = {}
+            # Con búsqueda web el servidor puede pausar el turno («pause_turn»); se continúa
+            # reenviando lo generado hasta que termine.
+            for _ in range(5):
+                # Se usa streaming porque las respuestas largas (contratos) pueden superar
+                # el tiempo máximo de una petición no transmitida.
+                with self._cliente.messages.stream(
+                    model=self.modelo,
+                    max_tokens=self.max_tokens,
+                    system=sistema,
+                    messages=mensajes,
+                    **extra,
+                ) as flujo:
+                    respuesta = flujo.get_final_message()
+                for bloque in respuesta.content:
+                    if bloque.type == "text":
+                        textos.append(bloque.text)
+                        for cita in getattr(bloque, "citations", None) or []:
+                            if getattr(cita, "url", None):
+                                fuentes.setdefault(cita.url, getattr(cita, "title", None) or cita.url)
+                if respuesta.stop_reason != "pause_turn":
+                    break
+                mensajes = mensajes + [{"role": "assistant", "content": respuesta.content}]
+            return anexar_fuentes("".join(textos), fuentes, self.nombre)
 
-        return self._con_esfuerzo(llamada)
+        return self._ejecutar(llamada)
 
 
 @dataclass
@@ -133,20 +193,33 @@ class MiembroOpenAI(_ConEsfuerzo):
         self._iniciar_esfuerzo(
             _esfuerzos_extremo("OPENAI_ESFUERZO_EXTREMO", "max,xhigh,high") if extremo else [None]
         )
+        self.busqueda = _busqueda_activa()
         self._cliente = openai.OpenAI(timeout=3600 if extremo else 600)
 
     def preguntar(self, sistema: str, mensaje: str) -> str:
         def llamada(esfuerzo: str | None) -> str:
-            extra = {"reasoning": {"effort": esfuerzo}} if esfuerzo else {}
+            extra: dict = {"reasoning": {"effort": esfuerzo}} if esfuerzo else {}
+            if self.busqueda:
+                herramienta: dict = {"type": "web_search"}
+                if _dominios():
+                    herramienta["filters"] = {"allowed_domains": _dominios()}
+                extra["tools"] = [herramienta]
             respuesta = self._cliente.responses.create(
                 model=self.modelo,
                 instructions=sistema,
                 input=mensaje,
                 **extra,
             )
-            return respuesta.output_text
+            fuentes: dict[str, str] = {}
+            for item in respuesta.output:
+                if item.type == "message":
+                    for parte in item.content:
+                        for anotacion in getattr(parte, "annotations", None) or []:
+                            if getattr(anotacion, "type", None) == "url_citation":
+                                fuentes.setdefault(anotacion.url, anotacion.title or anotacion.url)
+            return anexar_fuentes(respuesta.output_text, fuentes, self.nombre)
 
-        return self._con_esfuerzo(llamada)
+        return self._ejecutar(llamada)
 
 
 @dataclass
@@ -160,9 +233,7 @@ class MiembroPerplexity(_ConEsfuerzo):
     nivel: str = "estandar"
     nombre: str = "Perplexity"
     modelo: str = ""
-    dominios: list[str] = field(default_factory=lambda: [
-        d.strip() for d in os.getenv("PERPLEXITY_DOMINIOS", "").split(",") if d.strip()
-    ])
+    dominios: list[str] = field(default_factory=_dominios)
 
     def __post_init__(self) -> None:
         import perplexity
@@ -194,7 +265,7 @@ class MiembroPerplexity(_ConEsfuerzo):
                 parametros["reasoning"] = {"effort": esfuerzo}
             return formatear_con_fuentes(self._cliente.responses.create(**parametros))
 
-        return self._con_esfuerzo(llamada)
+        return self._ejecutar(llamada)
 
 
 def formatear_con_fuentes(respuesta) -> str:
@@ -209,9 +280,4 @@ def formatear_con_fuentes(respuesta) -> str:
                 for anotacion in parte.annotations or []:
                     if anotacion.url:
                         fuentes.setdefault(anotacion.url, anotacion.title or anotacion.url)
-    texto = respuesta.output_text
-    if fuentes:
-        texto += "\n\n### Fuentes consultadas por Perplexity\n" + "\n".join(
-            f"{i}. [{titulo}]({url})" for i, (url, titulo) in enumerate(fuentes.items(), 1)
-        )
-    return texto
+    return anexar_fuentes(respuesta.output_text, fuentes, "Perplexity")
