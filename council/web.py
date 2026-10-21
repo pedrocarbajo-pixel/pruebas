@@ -17,7 +17,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
 from .config import cargar_env
-from .informe import leer_documento
+from .documentos import EXTENSIONES, combinar, leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
 from .exportar import FORMATOS
@@ -29,7 +29,6 @@ CLAVES_API = {
     "perplexity": "PERPLEXITY_API_KEY",
 }
 NOMBRES = {"claude": "Claude", "chatgpt": "ChatGPT", "perplexity": "Perplexity"}
-EXTENSIONES = {".txt", ".md", ".docx", ".pdf"}
 
 
 def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = None) -> Flask:
@@ -77,19 +76,21 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
         if presidente not in miembros:
             return jsonify(error="El presidente debe ser uno de los miembros seleccionados."), 400
 
-        documento = None
-        fichero = request.files.get("documento")
-        if fichero and fichero.filename:
+        leidos = []
+        for fichero in request.files.getlist("documento"):
+            if not fichero.filename:
+                continue
             sufijo = Path(fichero.filename).suffix.lower()
             if sufijo not in EXTENSIONES:
-                return jsonify(error=f"Formato no admitido: {sufijo}"), 400
+                return jsonify(error=f"Formato no admitido: {fichero.filename}"), 400
             with tempfile.TemporaryDirectory() as tmp:
                 ruta = Path(tmp) / f"documento{sufijo}"
                 fichero.save(ruta)
                 try:
-                    documento = leer_documento(ruta)
+                    leidos.append((Path(fichero.filename).name, leer_documento(ruta)))
                 except Exception as e:
-                    return jsonify(error=f"No se pudo leer el documento: {e}"), 400
+                    return jsonify(error=f"No se pudo leer «{fichero.filename}»: {e}"), 400
+        documento = combinar(leidos)
 
         id_consulta = uuid.uuid4().hex
         estado = {"estado": "en_curso", "mensajes": [], "error": None, "salida": None}

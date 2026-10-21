@@ -666,3 +666,113 @@ def test_web_descarga_en_todos_los_formatos(tmp_path):
         assert descarga.status_code == 200, formato
         assert f"_presidente.{formato}" in descarga.headers["Content-Disposition"]
     assert cliente.get(f"/api/consultas/{id_consulta}/presidente/exe").status_code == 404
+
+
+def _libro_excel(ruta):
+    from datetime import datetime
+
+    from openpyxl import Workbook
+
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Liquidación"
+    hoja.append(["Concepto", "Importe", "Fecha"])
+    hoja.append(["Valor de transmisión", 300000, datetime(2026, 3, 15)])
+    hoja.append(["Valor de adquisición", 180000.5, datetime(2010, 6, 1)])
+    hoja.append(["Ganancia", "=B2-B3", None])
+    hoja.append(["Nota con | barra", True, None])
+    hoja.append(["Tipo", 0.21, None])
+    hoja["B6"].number_format = "0%"
+    oculta = libro.create_sheet("Auxiliar")
+    oculta.sheet_state = "hidden"
+    oculta["C2"] = "dato oculto"
+    libro.create_sheet("Vacía")
+    libro.save(ruta)
+    return ruta
+
+
+def test_leer_excel(tmp_path):
+    from council.documentos import leer_documento
+
+    texto = leer_documento(_libro_excel(tmp_path / "liquidacion.xlsx"))
+    assert texto.startswith("Libro de Excel con 3 hoja(s).")
+    assert "### Hoja «Liquidación»" in texto and "| Fila | A | B | C |" in texto
+    assert "| 2 | Valor de transmisión | 300000 | 15/03/2026 |" in texto
+    assert "| 3 | Valor de adquisición | 180000.5 | 01/06/2010 |" in texto
+    assert "| 5 | Nota con \\| barra | VERDADERO |  |" in texto
+    assert "| 6 | Tipo | 21 % |  |" in texto
+    # La fórmula se lista con su celda; openpyxl no calcula, así que se avisa de que falta el valor.
+    assert "- B4: =B2-B3 → (sin valor calculado" in texto
+    assert "### Hoja «Auxiliar» (hoja oculta)" in texto and "| 2 |  |  | dato oculto |" in texto
+    assert "### Hoja «Vacía»\n(hoja vacía)" in texto
+
+
+def test_leer_excel_recorta_hojas_grandes(tmp_path, monkeypatch):
+    from openpyxl import Workbook
+
+    from council import documentos
+
+    monkeypatch.setattr(documentos, "MAX_FILAS", 5)
+    libro = Workbook()
+    for n in range(1, 21):
+        libro.active.append([n, n * 2])
+    libro.save(tmp_path / "grande.xlsx")
+    texto = documentos.leer_documento(tmp_path / "grande.xlsx")
+    assert "se muestran las primeras 5 de 20 filas" in texto and "| 5 | 5 | 10 |" in texto
+    assert "\n| 6 | 6 | 12 |" not in texto
+
+
+def test_leer_csv_espanol(tmp_path):
+    from council.documentos import leer_documento
+
+    ruta = tmp_path / "movimientos.csv"
+    ruta.write_bytes("Fecha;Concepto;Importe\n01/02/2026;Cuota año;1.234,56\n".encode("cp1252"))
+    texto = leer_documento(ruta)
+    assert "| 2 | 01/02/2026 | Cuota año | 1.234,56 |" in texto
+
+
+def test_leer_xls_antiguo(tmp_path):
+    xlwt = pytest.importorskip("xlwt")
+    from council.documentos import leer_documento
+
+    libro = xlwt.Workbook()
+    hoja = libro.add_sheet("Datos")
+    hoja.write(0, 0, "Base")
+    hoja.write(0, 1, 1500.25)
+    libro.save(str(tmp_path / "antiguo.xls"))
+    texto = leer_documento(tmp_path / "antiguo.xls")
+    assert "no permite leer las fórmulas" in texto and "| 1 | Base | 1500.25 |" in texto
+
+
+def test_web_varios_documentos_con_excel(tmp_path):
+    import io
+
+    enviados = []
+
+    class Espia(MiembroFalso):
+        def preguntar(self, sistema, mensaje):
+            enviados.append(mensaje)
+            return super().preguntar(sistema, mensaje)
+
+    fabricas = {"claude": lambda nivel="estandar": Espia("Claude"),
+                "chatgpt": lambda nivel="estandar": Espia("ChatGPT")}
+    cliente = crear_app(tmp_path, fabricas=fabricas).test_client()
+    excel = _libro_excel(tmp_path / "liquidacion.xlsx").read_bytes()
+    r = cliente.post("/api/consultas", content_type="multipart/form-data", data={
+        "tarea": "Revisa la liquidación", "miembros": ["claude", "chatgpt"], "presidente": "claude",
+        "documento": [(io.BytesIO(excel), "liquidacion.xlsx"),
+                      (io.BytesIO("Contrato de compraventa…".encode()), "contrato.txt")],
+    })
+    assert r.status_code == 202, r.get_json()
+    id_consulta = r.get_json()["id"]
+    for _ in range(100):
+        if cliente.get(f"/api/consultas/{id_consulta}").get_json()["estado"] != "en_curso":
+            break
+        time.sleep(0.05)
+    primero = enviados[0]
+    assert "===== DOCUMENTO 1: liquidacion.xlsx =====" in primero and "Valor de transmisión" in primero
+    assert "===== DOCUMENTO 2: contrato.txt =====" in primero and "Contrato de compraventa" in primero
+    rechazo = cliente.post("/api/consultas", content_type="multipart/form-data", data={
+        "tarea": "T", "miembros": ["claude", "chatgpt"], "presidente": "claude",
+        "documento": [(io.BytesIO(b"x"), "macro.exe")]})
+    assert rechazo.status_code == 400 and "macro.exe" in rechazo.get_json()["error"]

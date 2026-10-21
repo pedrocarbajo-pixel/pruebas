@@ -74,7 +74,7 @@ cp .env.example .env      # rellene las claves; se cargan automáticamente al ar
 python -m council.web     # abra http://127.0.0.1:8000
 ```
 
-Permite escribir la tarea, adjuntar un documento (.txt, .md, .docx o .pdf), elegir el tipo de trabajo, los miembros y el presidente, y seudonimizar datos. Muestra el progreso de cada fase, el informe y botones para descargar el informe y el registro de auditoría.
+Permite escribir la tarea, adjuntar uno o varios documentos (Word, PDF, Excel .xlsx/.xlsm/.xls, CSV o texto), elegir el tipo de trabajo, los miembros y el presidente, y seudonimizar datos. Muestra el progreso de cada fase, el informe y botones para descargar el informe y el registro de auditoría.
 
 **Progreso:** mientras el consejo trabaja, un indicador animado muestra la fase en curso, el tiempo transcurrido y una barra que avanza con cada entrega de los miembros.
 
@@ -112,6 +112,14 @@ Para normas muy recientes o críticas, lo más fiable es **adjuntar su texto ofi
 - Usa la Agent API (`responses.create`) del SDK oficial `perplexityai` con el *preset* `PERPLEXITY_PRESET` (por defecto, `sonar-pro`).
 - Su búsqueda se limita a los dominios de `BUSQUEDA_DOMINIOS`, igual que la de los demás miembros.
 - Las fuentes consultadas se añaden a su respuesta para que el resto del consejo las contraste.
+
+## Hojas de cálculo
+
+Los libros de Excel (.xlsx, .xlsm, .xls) y los CSV se convierten en tablas con **letras de columna y números de fila**, para que el consejo pueda citar celdas concretas («B12»). Se incluyen todas las hojas (también las ocultas, señaladas como tales), con fechas y porcentajes tal como se ven en Excel, y la **lista de fórmulas con su resultado** para poder revisar los cálculos. Las hojas de más de 2.000 filas o 50 columnas se recortan y el texto lo indica.
+
+- Los resultados de las fórmulas son los que guardó Excel; si un archivo se generó con otro programa y nunca se abrió en Excel, la fórmula aparece sin valor calculado (basta con abrirlo y guardarlo).
+- El formato .xls antiguo solo permite leer valores, no fórmulas.
+- Los CSV exportados por Excel en español (separador «;» y codificación de Windows) se reconocen automáticamente.
 
 ## Seudonimización
 

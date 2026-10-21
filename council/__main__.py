@@ -4,7 +4,7 @@ Ejemplos:
     python -m council contrato_revisar "Revisa este arrendamiento" --documento contrato.docx
     python -m council informe_tributario "Tributación de la venta de un inmueble heredado"
     python -m council procedimiento_tributario "Analiza esta propuesta de liquidación" \
-        --documento propuesta.pdf --miembros claude perplexity
+        --documento propuesta.pdf liquidacion.xlsx --miembros claude perplexity
     python -m council dictamen_juridico "Riesgo de derivación de responsabilidad" --nivel extremo
 """
 
@@ -15,7 +15,7 @@ import sys
 from functools import partial
 
 from .config import cargar_env
-from .informe import leer_documento
+from .documentos import leer_documentos
 from .prompts import MODOS
 from .providers import NIVELES
 from .exportar import FORMATOS
@@ -27,7 +27,8 @@ def main(argv: list[str] | None = None) -> int:
                                 description="Consejo de LLM (Claude, ChatGPT y Perplexity).")
     p.add_argument("modo", choices=list(MODOS), help="tipo de tarea")
     p.add_argument("tarea", help="instrucción para el consejo")
-    p.add_argument("--documento", help="ruta a .txt, .md, .docx o .pdf")
+    p.add_argument("--documento", nargs="+", default=[],
+                   help="uno o varios archivos: .txt, .md, .docx, .pdf, .xlsx, .xlsm, .xls o .csv")
     p.add_argument("--miembros", nargs="+", choices=list(FABRICAS), default=list(FABRICAS),
                    help="miembros del consejo (mínimo dos; por defecto, todos)")
     p.add_argument("--presidente", choices=list(FABRICAS), default="claude",
@@ -45,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
 
     salida = ejecutar(
         tarea=args.tarea,
-        documento=leer_documento(args.documento) if args.documento else None,
+        documento=leer_documentos(args.documento),
         modo=args.modo,
         miembros=args.miembros,
         presidente=args.presidente,

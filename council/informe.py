@@ -16,20 +16,6 @@ AVISO = (
 )
 
 
-def leer_documento(ruta: str | Path) -> str:
-    ruta = Path(ruta)
-    sufijo = ruta.suffix.lower()
-    if sufijo == ".docx":
-        import docx
-
-        return "\n".join(p.text for p in docx.Document(ruta).paragraphs)
-    if sufijo == ".pdf":
-        from pypdf import PdfReader
-
-        return "\n".join(pagina.extract_text() or "" for pagina in PdfReader(ruta).pages)
-    return ruta.read_text(encoding="utf-8")
-
-
 def a_markdown(r: Resultado, incluir_detalle: bool = True) -> str:
     modelos = ", ".join(f"{n} ({m})" for n, m in r.modelos.items())
     lineas = [
