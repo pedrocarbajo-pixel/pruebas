@@ -530,7 +530,7 @@ def test_word_convierte_markdown(tmp_path):
     from docx import Document
 
     from council.consejo import Resultado
-    from council.word import informe_presidente
+    from council.exportar import exportar
 
     r = Resultado(tarea="Consulta de [EMAIL_1]", modo="informe_tributario", presidente="Claude",
                   modelos={"Claude": "claude-opus-5-5"}, sintesis="""## Respuesta final
@@ -549,7 +549,8 @@ Continúa el mismo párrafo.
 
 ## Nivel de confianza
 Medio""")
-    ruta = informe_presidente(r, tmp_path / "p.docx", restaurar=lambda t: t.replace("[EMAIL_1]", "a@b.es"))
+    ruta = exportar(r, "docx", tmp_path / "p", restaurar=lambda t: t.replace("[EMAIL_1]", "a@b.es"))
+    assert ruta.suffix == ".docx"
     doc = Document(ruta)
     parrafos = [(p.style.name, p.text) for p in doc.paragraphs if p.text]
     textos = [t for _, t in parrafos]
@@ -592,3 +593,76 @@ def test_servicio_y_web_generan_word(tmp_path):
     assert "Síntesis de Claude" in texto and "12345678Z" in tablas  # datos restaurados en local
     assert "Borrador de" not in texto  # solo el informe del presidente, sin anexos
     assert cliente.get(f"/api/consultas/{id_consulta}/otro").status_code == 404
+
+
+SINTESIS_EJEMPLO = """## Respuesta final
+La ganancia **tributa** en la base del *ahorro* (art. 33 → 49 LIRPF) ✓ según el [BOE](https://www.boe.es/x).
+
+1. Primer paso
+2. Segundo paso
+
+- Viñeta con `código`
+
+| Concepto | Importe |
+|---|---|
+| Valor | 300.000 € |
+
+> Verificar la vigencia.
+"""
+
+
+@pytest.mark.parametrize("formato", ["pdf", "html", "md", "txt"])
+def test_exportar_otros_formatos(tmp_path, formato):
+    from council.consejo import Resultado
+    from council.exportar import exportar
+
+    r = Resultado(tarea="Consulta de [DNI_1]", modo="informe_tributario", presidente="Claude",
+                  modelos={"Claude": "claude-opus-5-5"}, sintesis=SINTESIS_EJEMPLO)
+    ruta = exportar(r, formato, tmp_path / "informe", restaurar=lambda t: t.replace("[DNI_1]", "12345678Z"))
+    assert ruta.suffix == f".{formato}" and ruta.stat().st_size > 0
+    if formato == "pdf":
+        from pypdf import PdfReader
+
+        texto = "".join(p.extract_text() for p in PdfReader(ruta).pages)
+        assert "Informe del consejo de LLM" in texto and "300.000 €" in texto and "12345678Z" in texto
+        assert "Respuesta final" in texto and "Primer paso" in texto
+        return
+    texto = ruta.read_text(encoding="utf-8")
+    assert "12345678Z" in texto and "300.000 €" in texto and "[DNI_1]" not in texto
+    if formato == "html":
+        assert "<strong>tributa</strong>" in texto and '<a href="https://www.boe.es/x">BOE</a>' in texto
+        assert "<ol>" in texto and "<th>Concepto</th>" in texto and "<blockquote>" in texto
+    elif formato == "md":
+        assert SINTESIS_EJEMPLO.strip() in texto
+    else:
+        assert "**" not in texto and "|---" not in texto and "BOE (https://www.boe.es/x)" in texto
+        assert "1. Primer paso" in texto and "2. Segundo paso" in texto
+
+
+def test_pdf_sin_fuente_unicode_sustituye_simbolos(tmp_path, monkeypatch):
+    from pypdf import PdfReader
+
+    from council import exportar as modulo
+    from council.consejo import Resultado
+
+    monkeypatch.setattr(modulo, "_FUENTES", [])
+    r = Resultado(tarea="T", modo="general", presidente="Claude", sintesis=SINTESIS_EJEMPLO)
+    texto = "".join(p.extract_text() for p in PdfReader(modulo.exportar(r, "pdf", tmp_path / "x")).pages)
+    assert "33 -> 49" in texto and "300.000 €" in texto
+
+
+def test_web_descarga_en_todos_los_formatos(tmp_path):
+    cliente = crear_app(tmp_path, fabricas=fabricas_falsas()).test_client()
+    formatos = [f["id"] for f in cliente.get("/api/configuracion").get_json()["formatos"]]
+    assert formatos == ["docx", "pdf", "html", "md", "txt"]
+    r = cliente.post("/api/consultas", data={"tarea": "T", "miembros": ["claude", "chatgpt"], "presidente": "claude"})
+    id_consulta = r.get_json()["id"]
+    for _ in range(100):
+        if cliente.get(f"/api/consultas/{id_consulta}").get_json()["estado"] != "en_curso":
+            break
+        time.sleep(0.05)
+    for formato in formatos:
+        descarga = cliente.get(f"/api/consultas/{id_consulta}/presidente/{formato}")
+        assert descarga.status_code == 200, formato
+        assert f"_presidente.{formato}" in descarga.headers["Content-Disposition"]
+    assert cliente.get(f"/api/consultas/{id_consulta}/presidente/exe").status_code == 404

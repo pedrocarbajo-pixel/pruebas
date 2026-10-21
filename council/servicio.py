@@ -14,7 +14,7 @@ from . import privacidad
 from .consejo import Consejo, Resultado
 from .consejo import refinar as refinar_resultado
 from .informe import guardar
-from .word import informe_presidente
+from .exportar import exportar
 from .providers import MiembroClaude, MiembroOpenAI, MiembroPerplexity
 
 FABRICAS = {
@@ -93,13 +93,20 @@ def refinar(salida: Salida, instrucciones: str, registro=print, fabricas: dict |
     return salida
 
 
+def exportar_presidente(salida: Salida, formato: str) -> Path:
+    """Guarda el informe del presidente de la versión vigente en el formato indicado."""
+    mapa = salida.mapa_datos
+    restaurar = partial(privacidad.restaurar, mapa=mapa) if mapa else None
+    return exportar(salida.resultado, formato, salida.informe.with_name(salida.informe.stem + "_presidente"),
+                    restaurar=restaurar)
+
+
 def _guardar(salida: Salida, sufijo: str = "") -> None:
     mapa = salida.mapa_datos
     restaurar = partial(privacidad.restaurar, mapa=mapa) if mapa else None
     salida.informe, salida.registro = guardar(salida.resultado, salida.carpeta,
                                               restaurar=restaurar, sufijo=sufijo)
-    salida.word = informe_presidente(salida.resultado, salida.informe.with_name(
-        salida.informe.stem + "_presidente.docx"), restaurar=restaurar)
+    salida.word = exportar_presidente(salida, "docx")
     if mapa:
         # El mapa contiene los datos reales: se guarda aparte para poder custodiarlo.
         salida.mapa = salida.registro.parent / f"mapa_{salida.registro.stem}.json"

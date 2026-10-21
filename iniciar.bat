@@ -8,8 +8,9 @@ if not exist .venv (
   echo Creando el entorno de Python ^(solo la primera vez^)...
   py -3 -m venv .venv || python -m venv .venv || goto :sin_python
   .venv\Scripts\python -m pip install --quiet --upgrade pip
-  .venv\Scripts\python -m pip install --quiet -r requirements.txt
 )
+rem Instala lo que falte (p. ej., tras una actualizacion); si ya esta todo, termina en segundos.
+.venv\Scripts\python -m pip install --quiet --disable-pip-version-check -r requirements.txt
 
 if not exist .env (
   copy .env.example .env >nul

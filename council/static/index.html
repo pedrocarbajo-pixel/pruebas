@@ -46,6 +46,8 @@
   .aviso { background: var(--aviso); border: 1px solid var(--aviso-borde); border-radius: 8px;
            padding: 10px 14px; font-size: .9rem; }
   .error { color: var(--error); font-weight: 600; }
+  .descargas { margin-top: 18px; }
+  .etiqueta-descargas { display: block; font-weight: 600; margin-bottom: 8px; }
   #progreso ul { margin: 12px 0 0; padding-left: 18px; color: var(--tenue);
            font-variant-numeric: tabular-nums; }
   .actividad { display: flex; align-items: center; gap: 14px; }
@@ -154,8 +156,11 @@
 
   <section id="resultado" class="panel" hidden>
     <div class="aviso">Borrador generado por modelos de lenguaje. Debe revisarlo un profesional cualificado antes de usarlo.</div>
+    <div class="descargas">
+      <span class="etiqueta-descargas">Descargar el informe del presidente:</span>
+      <div id="formatos" class="acciones" style="margin-top:0"></div>
+    </div>
     <div class="acciones">
-      <a id="bajar-word" class="boton" href="#">Descargar informe del presidente (Word)</a>
       <a id="bajar-informe" class="boton secundario" href="#">Informe completo con anexos (.md)</a>
       <a id="bajar-registro" class="boton secundario" href="#">Registro de auditoría (.json)</a>
       <a class="boton secundario" href="#refinar">Pedir una versión corregida</a>
@@ -197,6 +202,14 @@ function actualizarPresidentes() {
 async function cargarConfiguracion() {
   const conf = await (await fetch("/api/configuracion")).json();
   for (const m of conf.modos) $("modo").add(new Option(m.nombre, m.id));
+  for (const [i, f] of conf.formatos.entries()) {
+    const enlace = document.createElement("a");
+    enlace.className = i === 0 ? "boton" : "boton secundario";
+    enlace.dataset.formato = f.id;
+    enlace.textContent = f.nombre;
+    enlace.href = "#";
+    $("formatos").append(enlace);
+  }
   for (const m of conf.miembros) {
     const etiqueta = document.createElement("label");
     etiqueta.innerHTML = `<input type="checkbox" name="miembros" value="${m.id}"> `;
@@ -301,7 +314,9 @@ async function seguir(id) {
   $("refinar").hidden = false;
   if (!r.error) $("instrucciones").value = "";
   $("informe").innerHTML = pintarMarkdown(r.informe);
-  $("bajar-word").href = `/api/consultas/${id}/word`;
+  for (const enlace of document.querySelectorAll("#formatos a")) {
+    enlace.href = `/api/consultas/${id}/presidente/${enlace.dataset.formato}`;
+  }
   $("bajar-informe").href = `/api/consultas/${id}/informe`;
   $("bajar-registro").href = `/api/consultas/${id}/registro`;
   $("resultado").hidden = false;

@@ -96,7 +96,7 @@ python -m council contrato_revisar "Revisa este contrato desde la posición del 
 
 ## Resultados (`salidas/`)
 
-- `informe_<fecha>_presidente.docx`: **informe del presidente en Word** (sin anexos), editable, con títulos, listas y tablas con formato real.
+- `informe_<fecha>_presidente.docx`: **informe del presidente en Word** (sin anexos), editable, con títulos, listas y tablas con formato real. Desde la web también puede descargarse en **PDF, HTML, Markdown o texto sin formato**; en la línea de órdenes, con `--formatos docx pdf html md txt`.
 - `informe_<fecha>.md`: síntesis final y anexos con borradores y revisiones.
 - `registro_<fecha>.json`: registro completo de la deliberación, para auditoría.
 - `mapa_registro_<fecha>.json` (solo al seudonimizar): correspondencia entre marcadores y datos reales. **Custódielo** como información confidencial.

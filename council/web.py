@@ -20,7 +20,8 @@ from .config import cargar_env
 from .informe import leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
-from .servicio import FABRICAS, ejecutar, refinar
+from .exportar import FORMATOS
+from .servicio import FABRICAS, ejecutar, exportar_presidente, refinar
 
 CLAVES_API = {
     "claude": "ANTHROPIC_API_KEY",
@@ -50,6 +51,7 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
     def configuracion():
         return jsonify(
             modos=[{"id": k, "nombre": v[0]} for k, v in MODOS.items()],
+            formatos=[{"id": k, "nombre": v[1]} for k, v in FORMATOS.items()],
             miembros=[{"id": k, "nombre": NOMBRES.get(k, k), "disponible": ok}
                       for k, ok in disponibles().items()],
         )
@@ -158,6 +160,16 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
                 respuesta["seudonimizados"] = estado["salida"].datos_seudonimizados
                 respuesta["version"] = len(estado["salida"].resultado.versiones) + 1
         return jsonify(respuesta)
+
+    @app.get("/api/consultas/<id_consulta>/presidente/<formato>")
+    def descargar_presidente(id_consulta: str, formato: str):
+        with cerrojo:
+            estado = consultas.get(id_consulta)
+            salida = estado and estado["salida"]
+            if not salida or formato not in FORMATOS or estado["estado"] == "en_curso":
+                abort(404)
+            ruta = exportar_presidente(salida, formato)
+        return send_file(ruta.resolve(), as_attachment=True, download_name=ruta.name)
 
     @app.get("/api/consultas/<id_consulta>/<tipo>")
     def descargar(id_consulta: str, tipo: str):

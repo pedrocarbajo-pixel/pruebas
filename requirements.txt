@@ -4,3 +4,4 @@ perplexityai>=0.44
 flask>=3.0
 python-docx>=1.1
 pypdf>=4.0
+reportlab>=4.0

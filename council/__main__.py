@@ -18,7 +18,8 @@ from .config import cargar_env
 from .informe import leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
-from .servicio import FABRICAS, ejecutar
+from .exportar import FORMATOS
+from .servicio import FABRICAS, ejecutar, exportar_presidente
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seudonimizar", action="store_true",
                    help="sustituye DNI, NIE, CIF, IBAN, correos y teléfonos antes de enviar")
     p.add_argument("--salida", default="salidas", help="carpeta de resultados")
+    p.add_argument("--formatos", nargs="+", choices=list(FORMATOS), default=["docx"],
+                   help="formatos del informe del presidente (por defecto: docx)")
     args = p.parse_args(argv)
     cargar_env()
 
@@ -51,8 +54,10 @@ def main(argv: list[str] | None = None) -> int:
         carpeta=args.salida,
         registro=partial(print, file=sys.stderr),
     )
-    print(f"Informe: {salida.informe}\nInforme del presidente (Word): {salida.word}\n"
-          f"Registro de auditoría: {salida.registro}", file=sys.stderr)
+    print(f"Informe completo: {salida.informe}\nRegistro de auditoría: {salida.registro}", file=sys.stderr)
+    for formato in args.formatos:
+        ruta = salida.word if formato == "docx" else exportar_presidente(salida, formato)
+        print(f"Informe del presidente ({FORMATOS[formato][1]}): {ruta}", file=sys.stderr)
     if salida.mapa:
         print(f"Mapa de seudonimización (confidencial): {salida.mapa}", file=sys.stderr)
     return 0
