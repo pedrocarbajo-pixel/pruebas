@@ -14,6 +14,7 @@ from . import privacidad
 from .consejo import Consejo, Resultado
 from .consejo import refinar as refinar_resultado
 from .informe import guardar
+from .word import informe_presidente
 from .providers import MiembroClaude, MiembroOpenAI, MiembroPerplexity
 
 FABRICAS = {
@@ -30,7 +31,7 @@ class Salida:
     registro: Path
     mapa: Path | None
     datos_seudonimizados: int
-    # Contexto necesario para pedir nuevas versiones (solo en memoria; no se guarda en disco).
+    word: Path | None = None  # informe del presidente en Word    # Contexto necesario para pedir nuevas versiones (solo en memoria; no se guarda en disco).
     presidente: str = "claude"
     documento: str | None = None
     seudonimizar: bool = False
@@ -97,6 +98,8 @@ def _guardar(salida: Salida, sufijo: str = "") -> None:
     restaurar = partial(privacidad.restaurar, mapa=mapa) if mapa else None
     salida.informe, salida.registro = guardar(salida.resultado, salida.carpeta,
                                               restaurar=restaurar, sufijo=sufijo)
+    salida.word = informe_presidente(salida.resultado, salida.informe.with_name(
+        salida.informe.stem + "_presidente.docx"), restaurar=restaurar)
     if mapa:
         # El mapa contiene los datos reales: se guarda aparte para poder custodiarlo.
         salida.mapa = salida.registro.parent / f"mapa_{salida.registro.stem}.json"

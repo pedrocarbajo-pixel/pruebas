@@ -524,3 +524,71 @@ def test_modelos_por_defecto(monkeypatch):
     assert candidatos("claude", "estandar") == ["claude-opus-5-5"]
     assert candidatos("chatgpt", "estandar")[0] == "gpt-6.1-sol"
     assert candidatos("chatgpt", "extremo")[0] == "gpt-6-astra"
+
+
+def test_word_convierte_markdown(tmp_path):
+    from docx import Document
+
+    from council.consejo import Resultado
+    from council.word import informe_presidente
+
+    r = Resultado(tarea="Consulta de [EMAIL_1]", modo="informe_tributario", presidente="Claude",
+                  modelos={"Claude": "claude-opus-5-5"}, sintesis="""## Respuesta final
+La ganancia **tributa** en la base del *ahorro* según el [art. 33 LIRPF](https://www.boe.es/x).
+Continúa el mismo párrafo.
+
+- Primer punto
+  - Subpunto
+1. Paso uno
+
+| Concepto | Importe |
+|---|---|
+| Valor de transmisión | 300.000 € |
+
+> Debe verificarse la vigencia.
+
+## Nivel de confianza
+Medio""")
+    ruta = informe_presidente(r, tmp_path / "p.docx", restaurar=lambda t: t.replace("[EMAIL_1]", "a@b.es"))
+    doc = Document(ruta)
+    parrafos = [(p.style.name, p.text) for p in doc.paragraphs if p.text]
+    textos = [t for _, t in parrafos]
+    assert ("Title", "Informe del consejo de LLM") in parrafos
+    assert ("Heading 2", "Respuesta final") in parrafos and ("Heading 2", "Nivel de confianza") in parrafos
+    cuerpo = next(p for p in doc.paragraphs if p.text.startswith("La ganancia"))
+    assert cuerpo.text == ("La ganancia tributa en la base del ahorro según el art. 33 LIRPF "
+                           "(https://www.boe.es/x). Continúa el mismo párrafo.")
+    assert any(run.bold and run.text == "tributa" for run in cuerpo.runs)
+    assert any(run.italic and run.text == "ahorro" for run in cuerpo.runs)
+    assert ("List Bullet", "Primer punto") in parrafos and ("List Bullet 2", "Subpunto") in parrafos
+    assert ("List Number", "Paso uno") in parrafos and ("Quote", "Debe verificarse la vigencia.") in parrafos
+    metadatos, importes = doc.tables
+    assert metadatos.cell(len(metadatos.rows) - 1, 1).text == "Consulta de a@b.es"
+    assert [c.text for c in importes.rows[1].cells] == ["Valor de transmisión", "300.000 €"]
+    assert not any("|---" in t for t in textos)
+
+
+def test_servicio_y_web_generan_word(tmp_path):
+    from docx import Document
+
+    cliente = crear_app(tmp_path, fabricas=fabricas_falsas()).test_client()
+    r = cliente.post("/api/consultas", data={"tarea": "Cliente DNI 12345678Z", "miembros": ["claude", "chatgpt"],
+                                             "presidente": "claude", "seudonimizar": "on"})
+    id_consulta = r.get_json()["id"]
+    for _ in range(100):
+        estado = cliente.get(f"/api/consultas/{id_consulta}").get_json()
+        if estado["estado"] != "en_curso":
+            break
+        time.sleep(0.05)
+    # El progreso informa de cada entrega.
+    assert sum("✓" in m for m in estado["mensajes"]) == 5
+    assert any("✓ Claude ha entregado la síntesis final" in m for m in estado["mensajes"])
+    descarga = cliente.get(f"/api/consultas/{id_consulta}/word")
+    assert descarga.status_code == 200 and "_presidente.docx" in descarga.headers["Content-Disposition"]
+    ruta = tmp_path / "descargado.docx"
+    ruta.write_bytes(descarga.data)
+    texto = "\n".join(p.text for p in Document(ruta).paragraphs)
+    tablas = "\n".join(c.text for t in Document(ruta).tables for f in t.rows for c in f.cells)
+    assert "Síntesis de Claude" in texto and "12345678Z" in tablas  # datos restaurados en local
+    assert "Borrador de" not in texto  # solo el informe del presidente, sin anexos
+    assert cliente.get(f"/api/consultas/{id_consulta}/otro").status_code == 404

@@ -164,9 +164,10 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
         with cerrojo:
             estado = consultas.get(id_consulta)
             salida = estado and estado["salida"]
-        if not salida or tipo not in ("informe", "registro"):
+        rutas = {"informe": salida.informe, "registro": salida.registro, "word": salida.word} if salida else {}
+        ruta = rutas.get(tipo)
+        if not ruta:
             abort(404)
-        ruta = salida.informe if tipo == "informe" else salida.registro
         return send_file(ruta.resolve(), as_attachment=True, download_name=ruta.name)
 
     return app

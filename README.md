@@ -76,6 +76,8 @@ python -m council.web     # abra http://127.0.0.1:8000
 
 Permite escribir la tarea, adjuntar un documento (.txt, .md, .docx o .pdf), elegir el tipo de trabajo, los miembros y el presidente, y seudonimizar datos. Muestra el progreso de cada fase, el informe y botones para descargar el informe y el registro de auditoría.
 
+**Progreso:** mientras el consejo trabaja, un indicador animado muestra la fase en curso, el tiempo transcurrido y una barra que avanza con cada entrega de los miembros.
+
 **Versiones corregidas:** debajo del informe hay un campo «Solicitar una versión corregida». Escriba sus indicaciones (por ejemplo, «incorpora las citas concretas de la Ley del IRPF») y el presidente redactará una nueva versión completa a partir de los borradores y revisiones del consejo. Cada versión se guarda en un archivo propio (`_v2`, `_v3`…) y las anteriores quedan en el «Anexo III · Historial de versiones». Si la consulta se lanzó con seudonimización, las indicaciones también se seudonimizan.
 
 **Seguridad:** el servidor no tiene autenticación y escucha solo en `127.0.0.1`. No lo exponga en una red sin colocar delante un proxy con autenticación y HTTPS. Las librerías de la página se sirven localmente, sin peticiones a CDN externas.
@@ -94,6 +96,7 @@ python -m council contrato_revisar "Revisa este contrato desde la posición del 
 
 ## Resultados (`salidas/`)
 
+- `informe_<fecha>_presidente.docx`: **informe del presidente en Word** (sin anexos), editable, con títulos, listas y tablas con formato real.
 - `informe_<fecha>.md`: síntesis final y anexos con borradores y revisiones.
 - `registro_<fecha>.json`: registro completo de la deliberación, para auditoría.
 - `mapa_registro_<fecha>.json` (solo al seudonimizar): correspondencia entre marcadores y datos reales. **Custódielo** como información confidencial.

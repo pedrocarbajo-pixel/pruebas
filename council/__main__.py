@@ -51,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         carpeta=args.salida,
         registro=partial(print, file=sys.stderr),
     )
-    print(f"Informe: {salida.informe}\nRegistro de auditoría: {salida.registro}", file=sys.stderr)
+    print(f"Informe: {salida.informe}\nInforme del presidente (Word): {salida.word}\n"
+          f"Registro de auditoría: {salida.registro}", file=sys.stderr)
     if salida.mapa:
         print(f"Mapa de seudonimización (confidencial): {salida.mapa}", file=sys.stderr)
     return 0

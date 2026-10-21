@@ -10,13 +10,13 @@
   :root {
     --fondo: #f6f5f2; --panel: #ffffff; --texto: #1d1d1f; --tenue: #6b6b70;
     --borde: #dcdad5; --acento: #2f4f8f; --acento-texto: #ffffff;
-    --aviso: #fff6e0; --aviso-borde: #e6c46a; --error: #b3261e;
+    --aviso: #fff6e0; --aviso-borde: #e6c46a; --error: #b3261e; --exito: #2e7d4f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --fondo: #161618; --panel: #1f1f22; --texto: #ececee; --tenue: #a0a0a8;
       --borde: #34343a; --acento: #8fb0f0; --acento-texto: #10121a;
-      --aviso: #2d2617; --aviso-borde: #7a6326; --error: #f2847c;
+      --aviso: #2d2617; --aviso-borde: #7a6326; --error: #f2847c; --exito: #6fcf97;
     }
   }
   * { box-sizing: border-box; }
@@ -46,8 +46,32 @@
   .aviso { background: var(--aviso); border: 1px solid var(--aviso-borde); border-radius: 8px;
            padding: 10px 14px; font-size: .9rem; }
   .error { color: var(--error); font-weight: 600; }
-  #progreso ul { margin: 8px 0 0; padding-left: 18px; color: var(--tenue);
+  #progreso ul { margin: 12px 0 0; padding-left: 18px; color: var(--tenue);
            font-variant-numeric: tabular-nums; }
+  .actividad { display: flex; align-items: center; gap: 14px; }
+  .actividad > div { min-width: 0; }
+  .icono-actividad { position: relative; width: 52px; height: 52px; flex: none;
+           display: grid; place-items: center; }
+  .girador { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--borde);
+           border-top-color: var(--acento); animation: girar 1s linear infinite; }
+  .emoji { font-size: 1.5rem; animation: latir 1.6s ease-in-out infinite; }
+  .terminado .girador { animation: none; border-color: var(--exito); }
+  .terminado .emoji, .fallido .emoji { animation: none; }
+  .fallido .girador { animation: none; border-color: var(--error); }
+  .cronometro { color: var(--tenue); font-size: .9rem; font-variant-numeric: tabular-nums; }
+  .barra { height: 8px; border-radius: 4px; background: var(--fondo); border: 1px solid var(--borde);
+           overflow: hidden; margin-top: 14px; }
+  .barra > div { height: 100%; width: 0; background: var(--acento); transition: width .6s ease;
+           background-image: linear-gradient(45deg, rgba(255,255,255,.25) 25%, transparent 25%,
+             transparent 50%, rgba(255,255,255,.25) 50%, rgba(255,255,255,.25) 75%, transparent 75%);
+           background-size: 24px 24px; animation: rayas 1s linear infinite; }
+  .terminado .barra > div, .fallido .barra > div { animation: none; }
+  @keyframes girar { to { transform: rotate(360deg); } }
+  @keyframes latir { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
+  @keyframes rayas { to { background-position: 24px 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .girador, .emoji, .barra > div { animation: none; }
+  }
   #informe { overflow-wrap: anywhere; }
   #informe table { border-collapse: collapse; display: block; overflow-x: auto; margin: 12px 0; }
   #informe th, #informe td { border: 1px solid var(--borde); padding: 6px 10px; vertical-align: top; }
@@ -113,16 +137,27 @@
     <p id="error" class="error" hidden></p>
   </form>
 
-  <section id="progreso" class="panel" hidden>
-    <strong id="estado">Deliberando…</strong>
+  <section id="progreso" class="panel" hidden aria-live="polite">
+    <div class="actividad">
+      <div class="icono-actividad" aria-hidden="true">
+        <span class="girador"></span>
+        <span class="emoji" id="emoji">⚖️</span>
+      </div>
+      <div>
+        <strong id="estado">Deliberando…</strong>
+        <div class="cronometro"><span id="cronometro">0 s</span> · <span id="fase">Preparando…</span></div>
+      </div>
+    </div>
+    <div class="barra"><div id="barra"></div></div>
     <ul id="mensajes"></ul>
   </section>
 
   <section id="resultado" class="panel" hidden>
     <div class="aviso">Borrador generado por modelos de lenguaje. Debe revisarlo un profesional cualificado antes de usarlo.</div>
     <div class="acciones">
-      <a id="bajar-informe" class="boton" href="#">Descargar informe (.md)</a>
-      <a id="bajar-registro" class="boton secundario" href="#">Descargar registro de auditoría (.json)</a>
+      <a id="bajar-word" class="boton" href="#">Descargar informe del presidente (Word)</a>
+      <a id="bajar-informe" class="boton secundario" href="#">Informe completo con anexos (.md)</a>
+      <a id="bajar-registro" class="boton secundario" href="#">Registro de auditoría (.json)</a>
       <a class="boton secundario" href="#refinar">Pedir una versión corregida</a>
     </div>
     <article id="informe"></article>
@@ -181,6 +216,61 @@ function mostrarError(texto) {
   $("error").hidden = !texto;
 }
 
+// Indicador de actividad: cronómetro, icono y barra según la fase en curso.
+const EMOJIS = { 1: "✍️", 2: "🔍", 3: "⚖️", refinar: "📝" };
+const FASES = { 1: "Fase 1 de 3 · borradores independientes", 2: "Fase 2 de 3 · revisión cruzada",
+                3: "Fase 3 de 3 · síntesis del presidente", refinar: "El presidente prepara la nueva versión" };
+let trabajo = null;  // { inicio, pasos, refinar, reloj }
+
+function formatearTiempo(segundos) {
+  const m = Math.floor(segundos / 60), s = segundos % 60;
+  return m ? `${m} min ${String(s).padStart(2, "0")} s` : `${s} s`;
+}
+
+function iniciarActividad(pasos, refinar = false) {
+  detenerActividad();
+  trabajo = { inicio: Date.now(), pasos, refinar };
+  $("progreso").classList.remove("terminado", "fallido");
+  $("emoji").textContent = refinar ? EMOJIS.refinar : "⏳";
+  $("fase").textContent = refinar ? FASES.refinar : "Preparando…";
+  $("barra").style.width = refinar ? "100%" : "3%";
+  $("cronometro").textContent = "0 s";
+  trabajo.reloj = setInterval(() => {
+    $("cronometro").textContent = formatearTiempo(Math.round((Date.now() - trabajo.inicio) / 1000));
+  }, 1000);
+  $("progreso").hidden = false;
+}
+
+function actualizarActividad(mensajes) {
+  // En una versión corregida solo trabaja el presidente: la barra queda en movimiento continuo.
+  if (!trabajo || trabajo.refinar) return;
+  let fase = 0;
+  for (const m of mensajes) {
+    const f = m.match(/Fase (\d)\/3/);
+    if (f) fase = Number(f[1]);
+  }
+  const hechos = mensajes.filter((m) => m.includes("✓")).length;
+  if (fase) {
+    $("emoji").textContent = EMOJIS[fase];
+    $("fase").textContent = FASES[fase];
+  }
+  $("barra").style.width = `${Math.max(3, Math.round((hechos / trabajo.pasos) * 100))}%`;
+}
+
+function detenerActividad(estado) {
+  if (!trabajo) return;
+  clearInterval(trabajo.reloj);
+  const segundos = Math.round((Date.now() - trabajo.inicio) / 1000);
+  if (estado) {
+    $("progreso").classList.add(estado === "ok" ? "terminado" : "fallido");
+    $("emoji").textContent = estado === "ok" ? "✅" : "⚠️";
+    $("barra").style.width = "100%";
+    $("cronometro").textContent = `${estado === "ok" ? "Terminado" : "Detenido"} en ${formatearTiempo(segundos)}`;
+    $("fase").textContent = estado === "ok" ? "Informe disponible abajo" : "Revise el mensaje de error";
+  }
+  trabajo = null;
+}
+
 async function seguir(id) {
   let r;
   try {
@@ -194,8 +284,10 @@ async function seguir(id) {
     li.textContent = m;
     $("mensajes").append(li);
   }
-  if (r.estado === "en_curso") return setTimeout(() => seguir(id), 2500);
+  actualizarActividad(r.mensajes);
+  if (r.estado === "en_curso") return setTimeout(() => seguir(id), 2000);
 
+  detenerActividad(r.estado === "error" || r.error ? "error" : "ok");
   $("enviar").disabled = false;
   $("enviar-refinar").disabled = false;
   if (r.estado === "error") {
@@ -209,6 +301,7 @@ async function seguir(id) {
   $("refinar").hidden = false;
   if (!r.error) $("instrucciones").value = "";
   $("informe").innerHTML = pintarMarkdown(r.informe);
+  $("bajar-word").href = `/api/consultas/${id}/word`;
   $("bajar-informe").href = `/api/consultas/${id}/informe`;
   $("bajar-registro").href = `/api/consultas/${id}/registro`;
   $("resultado").hidden = false;
@@ -236,6 +329,7 @@ $("enviar-refinar").addEventListener("click", async () => {
     return;
   }
   $("estado").textContent = "Generando la versión corregida…";
+  iniciarActividad(1, true);
   $("progreso").scrollIntoView({ behavior: "smooth" });
   seguir(consultaActual);
 });
@@ -259,9 +353,10 @@ $("formulario").addEventListener("submit", async (e) => {
     $("enviar").disabled = false;
     return mostrarError(datos.error);
   }
-  $("estado").textContent = "Deliberando… (puede tardar varios minutos)";
+  $("estado").textContent = "El consejo está trabajando… (puede tardar varios minutos)";
   $("mensajes").innerHTML = "";
-  $("progreso").hidden = false;
+  const miembros = document.querySelectorAll("#miembros input:checked").length;
+  iniciarActividad(2 * miembros + 1);  // borradores + revisiones + síntesis
   consultaActual = datos.id;
   seguir(datos.id);
 });

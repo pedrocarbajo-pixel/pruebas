@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -109,7 +109,7 @@ class Consejo:
         self.registro("Fase 1/3 · Borradores independientes…")
         mensaje = prompts.FASE_BORRADOR.format(**contexto)
         resultado.borradores = self._en_paralelo(
-            {m.nombre: (m, mensaje) for m in self.miembros}
+            {m.nombre: (m, mensaje) for m in self.miembros}, "ha entregado su borrador"
         )
 
         self.registro("Fase 2/3 · Revisión cruzada…")
@@ -122,13 +122,14 @@ class Consejo:
             )
             msg = prompts.FASE_REVISION_CRUZADA.format(**contexto, respuestas=respuestas)
             encargos[revisor.nombre] = (revisor, msg)
-        resultado.revisiones = self._en_paralelo(encargos)
+        resultado.revisiones = self._en_paralelo(encargos, "ha entregado su revisión")
 
         self.registro(f"Fase 3/3 · Síntesis del presidente ({self.presidente.nombre})…")
         resultado.sintesis = self.presidente.preguntar(
             self.sistema,
             prompts.FASE_SINTESIS.format(**contexto, materiales=materiales(resultado)),
         )
+        self.registro(f"✓ {self.presidente.nombre} ha entregado la síntesis final.")
         # Se anota al final porque el esfuerzo efectivo puede haberse rebajado durante la deliberación.
         resultado.modelos = {
             m.nombre: m.descripcion() if hasattr(m, "descripcion") else m.modelo
@@ -137,10 +138,17 @@ class Consejo:
         self.registro("Deliberación terminada.")
         return resultado
 
-    def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]]) -> dict[str, str]:
+    def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]], aviso: str) -> dict[str, str]:
         with ThreadPoolExecutor(max_workers=len(encargos)) as ejecutor:
             futuros = {
-                clave: ejecutor.submit(miembro.preguntar, self.sistema, mensaje)
+                ejecutor.submit(miembro.preguntar, self.sistema, mensaje): clave
                 for clave, (miembro, mensaje) in encargos.items()
             }
-            return {clave: futuro.result() for clave, futuro in futuros.items()}
+            # Se avisa de cada entrega en cuanto llega, para que el progreso sea visible.
+            resultados = {}
+            for hecho, futuro in enumerate(as_completed(futuros), 1):
+                clave = futuros[futuro]
+                resultados[clave] = futuro.result()
+                self.registro(f"✓ {clave} {aviso} ({hecho} de {len(encargos)}).")
+            # Se conserva el orden de los miembros, del que depende su alias anónimo.
+            return {clave: resultados[clave] for clave in encargos}
