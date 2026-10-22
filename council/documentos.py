@@ -77,13 +77,18 @@ def _word(ruta: Path) -> str:
 def _pdf(ruta: Path) -> str:
     from pypdf import PdfReader
 
-    paginas = PdfReader(ruta).pages
-    texto = "\n".join(pagina.extract_text() or "" for pagina in paginas)
+    textos = [(pagina.extract_text() or "").strip() for pagina in PdfReader(ruta).pages]
     # Un PDF escaneado (una imagen) no contiene texto: analizarlo «vacío» sería engañoso.
-    if len(texto.strip()) < 20 * max(len(paginas), 1):
+    if len("".join(textos)) < 20 * max(len(textos), 1):
         raise ValueError(f"«{ruta.name}» parece un PDF escaneado (imagen sin texto). Aplíquele "
                          "reconocimiento de texto (OCR), por ejemplo con Vista Previa o Adobe Acrobat, "
                          "y vuelva a adjuntarlo.")
+    texto = "\n".join(textos)
+    # Si solo algunas páginas son imágenes (p. ej., un anexo escaneado), se avisa expresamente.
+    sin_texto = [str(n) for n, t in enumerate(textos, 1) if len(t) < 20]
+    if sin_texto:
+        texto += (f"\n\n[AVISO DEL SISTEMA: las páginas {', '.join(sin_texto)} de «{ruta.name}» no contienen "
+                  "texto legible (posiblemente escaneadas) y NO se han podido analizar.]")
     return texto
 
 

@@ -82,6 +82,8 @@ def ejecutar(
     consejo = Consejo(list(instancias.values()), presidente=instancias[presidente],
                       registro=registro, nivel=nivel)
     resultado = consejo.deliberar(tarea, documento, modo=modo)
+    # Si el presidente falló y otro miembro redactó la síntesis, las versiones corregidas se le piden a este.
+    presidente = next(clave for clave, m in instancias.items() if m.nombre == resultado.presidente)
 
     salida = Salida(resultado, Path(), Path(), None, len(mapa), presidente=presidente,
                     documento=documento, seudonimizar=seudonimizar, mapa_datos=mapa,

@@ -957,3 +957,40 @@ def test_instrucciones_tratan_documentos_como_datos():
 
     texto = prompts.sistema()
     assert "nunca instrucciones" in texto and "No menciones qué modelo" in texto
+
+
+# --- Auditoría (bucle 2) ------------------------------------------------------------------
+
+def test_version_corregida_la_pide_el_presidente_efectivo(tmp_path):
+    from council.servicio import refinar
+
+    llamados = []
+
+    class Anota(MiembroFalso):
+        def preguntar(self, sistema, mensaje):
+            if "INDICACIONES DEL USUARIO" in mensaje:
+                llamados.append(self.nombre)
+            return super().preguntar(sistema, mensaje)
+
+    fabricas = {"claude": lambda nivel: Fallido("Claude", "sintesis"), "chatgpt": lambda nivel: Anota("ChatGPT")}
+    salida = ejecutar("T", carpeta=tmp_path, registro=lambda *_: None, fabricas=fabricas)
+    assert salida.presidente == "chatgpt"
+    refinar(salida, "Más citas", registro=lambda *_: None, fabricas=fabricas)
+    assert llamados == ["ChatGPT"]
+
+
+def test_pdf_con_paginas_escaneadas_lo_avisa(tmp_path):
+    from reportlab.pdfgen import canvas
+
+    from council.documentos import leer_documento
+
+    ruta = tmp_path / "notificacion.pdf"
+    c = canvas.Canvas(str(ruta))
+    c.drawString(72, 700, "Propuesta de liquidacion provisional del IRPF, ejercicio 2024. Cuota: 1.234 euros.")
+    c.showPage()
+    c.rect(100, 100, 300, 300, fill=1)  # anexo escaneado
+    c.showPage()
+    c.save()
+    texto = leer_documento(ruta)
+    assert "Propuesta de liquidacion" in texto
+    assert "las páginas 2 de «notificacion.pdf» no contienen texto" in texto
