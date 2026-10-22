@@ -19,6 +19,8 @@ if [ ! -f .env ]; then
   exit 0
 fi
 
+chmod 600 .env  # las claves de API solo deben ser legibles por su usuario
+
 echo "Verificando la conexión con los proveedores…"
 if ! .venv/bin/python -m council.verificar; then
   echo

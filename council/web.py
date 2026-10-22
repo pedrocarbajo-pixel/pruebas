@@ -11,6 +11,7 @@ import tempfile
 import threading
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
@@ -28,6 +29,18 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
     app = Flask(__name__, static_folder="static")
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
     gestor = GestorConsultas(carpeta_salida, fabricas)
+
+    @app.before_request
+    def solo_peticiones_locales():
+        # Otra web abierta en el navegador podría enviar consultas a esta aplicación (y gastar
+        # saldo de las API) o, con «DNS rebinding», leer los informes. Se exige que el nombre de
+        # servidor sea local y que los envíos procedan de la propia página.
+        servidor = request.host.rsplit(":", 1)[0].strip("[]")
+        if servidor not in ("127.0.0.1", "localhost", "::1") and servidor != os.getenv("COUNCIL_HOST"):
+            abort(403)
+        origen = request.headers.get("Origin")
+        if request.method == "POST" and origen and urlparse(origen).netloc != request.host:
+            abort(403)
 
     def disponibles() -> dict[str, bool]:
         return {clave: True for clave in fabricas} if fabricas else miembros_disponibles()

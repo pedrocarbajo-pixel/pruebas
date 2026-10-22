@@ -66,11 +66,18 @@ def _dominios() -> list[str]:
     return [d.strip() for d in valor.split(",") if d.strip()]
 
 
-def anexar_fuentes(texto: str, fuentes: dict[str, str], nombre: str) -> str:
-    """Añade al texto la lista de fuentes web consultadas ({url: título})."""
+AVISO_TRUNCADO = ("\n\n[AVISO DEL SISTEMA: esta respuesta está INCOMPLETA porque el modelo alcanzó su "
+                  "límite de longitud. Tenga en cuenta que puede faltar contenido.]")
+AVISO_RECHAZO = "\n\n[AVISO DEL SISTEMA: el modelo ha declinado completar esta respuesta.]"
+
+
+def anexar_fuentes(texto: str, fuentes: dict[str, str]) -> str:
+    """Añade al texto la lista de fuentes web consultadas ({url: título}).
+
+    El encabezado no menciona al miembro: los borradores se revisan de forma anónima."""
     if not fuentes:
         return texto
-    return texto + f"\n\n### Fuentes consultadas por {nombre}\n" + "\n".join(
+    return texto + "\n\n### Fuentes consultadas\n" + "\n".join(
         f"{i}. [{titulo}]({url})" for i, (url, titulo) in enumerate(fuentes.items(), 1)
     )
 
@@ -196,7 +203,12 @@ class MiembroClaude(_ConEsfuerzo):
                 if respuesta.stop_reason != "pause_turn":
                     break
                 mensajes = mensajes + [{"role": "assistant", "content": respuesta.content}]
-            return anexar_fuentes("".join(textos), fuentes, self.nombre)
+            texto = "".join(textos)
+            if respuesta.stop_reason in ("max_tokens", "model_context_window_exceeded"):
+                texto += AVISO_TRUNCADO
+            elif respuesta.stop_reason == "refusal":
+                texto += AVISO_RECHAZO
+            return anexar_fuentes(texto, fuentes)
 
         return self._ejecutar(llamada)
 
@@ -239,7 +251,7 @@ class MiembroOpenAI(_ConEsfuerzo):
                         for anotacion in getattr(parte, "annotations", None) or []:
                             if getattr(anotacion, "type", None) == "url_citation":
                                 fuentes.setdefault(anotacion.url, anotacion.title or anotacion.url)
-            return anexar_fuentes(respuesta.output_text, fuentes, self.nombre)
+            return anexar_fuentes(respuesta.output_text + _aviso_incompleto(respuesta), fuentes)
 
         return self._ejecutar(llamada)
 
@@ -299,4 +311,9 @@ def formatear_con_fuentes(respuesta) -> str:
                 for anotacion in parte.annotations or []:
                     if anotacion.url:
                         fuentes.setdefault(anotacion.url, anotacion.title or anotacion.url)
-    return anexar_fuentes(respuesta.output_text, fuentes, "Perplexity")
+    return anexar_fuentes(respuesta.output_text + _aviso_incompleto(respuesta), fuentes)
+
+
+def _aviso_incompleto(respuesta) -> str:
+    """Aviso si la Responses API (OpenAI o Perplexity) devuelve una respuesta incompleta."""
+    return AVISO_TRUNCADO if getattr(respuesta, "status", None) == "incomplete" else ""

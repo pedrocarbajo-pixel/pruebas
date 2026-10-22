@@ -8,7 +8,9 @@ formato tiene su propio generador a partir de esos bloques, de modo que todos mu
 from __future__ import annotations
 
 import html
+import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -134,6 +136,8 @@ def metadatos(r: Resultado, restaurar) -> list[tuple[str, str]]:
     ]
     if r.versiones:
         datos.append(("Versión", f"{len(r.versiones) + 1} (corregida a petición del usuario)"))
+    if r.incidencias:
+        datos.append(("Incidencias", "; ".join(r.incidencias)))
     datos.append(("Tarea", restaurar(r.tarea)))
     return datos
 
@@ -455,5 +459,11 @@ def exportar(r: Resultado, formato: str, ruta: str | Path, restaurar=None) -> Pa
         raise ValueError(f"Formato no admitido: {formato}. Opciones: {', '.join(FORMATOS)}")
     restaurar = restaurar or (lambda t: t)
     ruta = Path(ruta).with_suffix(FORMATOS[formato][0])
-    _GENERADORES[formato](r, restaurar(r.sintesis), metadatos(r, restaurar), ruta)
+    # Se escribe en un archivo temporal y se renombra: así nunca se lee un archivo a medio escribir.
+    temporal = ruta.with_name(f".{ruta.stem}.{os.getpid()}.{threading.get_ident()}{ruta.suffix}")
+    try:
+        _GENERADORES[formato](r, restaurar(r.sintesis), metadatos(r, restaurar), temporal)
+        os.replace(temporal, ruta)
+    finally:
+        temporal.unlink(missing_ok=True)
     return ruta

@@ -30,6 +30,7 @@ def a_markdown(r: Resultado, incluir_detalle: bool = True) -> str:
         f"- **Presidente:** {r.presidente}",
         f"- **Tarea:** {r.tarea}",
         *([f"- **Versión:** {len(r.versiones) + 1} (corregida a petición del usuario)"] if r.versiones else []),
+        *([f"- **Incidencias:** {'; '.join(r.incidencias)}"] if r.incidencias else []),
         "",
         r.sintesis,
     ]

@@ -24,13 +24,9 @@ def leer_documento(ruta: str | Path) -> str:
     ruta = Path(ruta)
     sufijo = ruta.suffix.lower()
     if sufijo == ".docx":
-        import docx
-
-        return "\n".join(p.text for p in docx.Document(ruta).paragraphs)
+        return _word(ruta)
     if sufijo == ".pdf":
-        from pypdf import PdfReader
-
-        return "\n".join(pagina.extract_text() or "" for pagina in PdfReader(ruta).pages)
+        return _pdf(ruta)
     if sufijo in (".xlsx", ".xlsm"):
         return _excel(ruta)
     if sufijo == ".xls":
@@ -50,6 +46,45 @@ def combinar(documentos: list[tuple[str, str]]) -> str | None:
 
 def leer_documentos(rutas: list[str | Path]) -> str | None:
     return combinar([(Path(r).name, leer_documento(r)) for r in rutas])
+
+
+def _word(ruta: Path) -> str:
+    """Texto de un Word en el orden del documento, incluidas las tablas (frecuentes en contratos)."""
+    import docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    documento = docx.Document(ruta)
+    partes = []
+    for elemento in documento.element.body.iterchildren():
+        etiqueta = elemento.tag.rsplit("}", 1)[-1]
+        if etiqueta == "p":
+            partes.append(Paragraph(elemento, documento).text)
+        elif etiqueta == "tbl":
+            filas = []
+            for fila in Table(elemento, documento).rows:
+                celdas, anterior = [], None
+                for celda in fila.cells:
+                    # Una celda combinada aparece repetida (mismo elemento): se muestra una vez.
+                    if celda._tc is not anterior:
+                        celdas.append(celda.text.replace("|", "\\|").replace("\n", " ").strip())
+                    anterior = celda._tc
+                filas.append("| " + " | ".join(celdas) + " |")
+            partes.append("\n".join(filas))
+    return "\n".join(partes)
+
+
+def _pdf(ruta: Path) -> str:
+    from pypdf import PdfReader
+
+    paginas = PdfReader(ruta).pages
+    texto = "\n".join(pagina.extract_text() or "" for pagina in paginas)
+    # Un PDF escaneado (una imagen) no contiene texto: analizarlo «vacío» sería engañoso.
+    if len(texto.strip()) < 20 * max(len(paginas), 1):
+        raise ValueError(f"«{ruta.name}» parece un PDF escaneado (imagen sin texto). Aplíquele "
+                         "reconocimiento de texto (OCR), por ejemplo con Vista Previa o Adobe Acrobat, "
+                         "y vuelva a adjuntarlo.")
+    return texto
 
 
 # --- Hojas de cálculo ------------------------------------------------------------------------

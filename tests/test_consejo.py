@@ -438,7 +438,8 @@ def test_claude_busqueda_web_con_fuentes_y_pausa(monkeypatch):
     miembro._cliente = NS(messages=NS(stream=stream))
     texto = miembro.preguntar("s", "m")
     assert texto.startswith("Según el BOE, el RDL 29/2026 regula…")
-    assert "1. [RDL 29/2026](https://www.boe.es/buscar/act.php?id=BOE-A-2026-20823)" in texto
+    assert "### Fuentes consultadas\n1. [RDL 29/2026](https://www.boe.es/buscar/act.php?id=BOE-A-2026-20823)" in texto
+    assert "Claude" not in texto  # sin pistas de autoría para la revisión anónima
     herramienta = peticiones[0]["tools"][0]
     assert herramienta["name"] == "web_search" and herramienta["allowed_domains"] == ["boe.es", "hacienda.gob.es"]
     # Tras la pausa se reenvía lo generado para que el modelo continúe.
@@ -831,3 +832,128 @@ def test_instalar_en_claude_conserva_otros_servidores(tmp_path):
     # Sin archivo previo, lo crea (y sin copia de seguridad).
     nueva = tmp_path / "nueva" / "claude_desktop_config.json"
     assert registrar(nueva, Path("/p"), Path("/s")) is None and "consejo-llm" in nueva.read_text()
+
+
+# --- Auditoría (bucle 1) ------------------------------------------------------------------
+
+class Fallido(MiembroFalso):
+    def __init__(self, nombre, fase):
+        super().__init__(nombre)
+        self.fase = fase
+
+    def preguntar(self, sistema, mensaje):
+        fase = ("sintesis" if "PRESIDENTE" in mensaje else
+                "revision" if "Respuesta de Miembro" in mensaje else "borrador")
+        if fase == self.fase:
+            raise RuntimeError(f"caída en {fase}")
+        return super().preguntar(sistema, mensaje)
+
+
+def test_consejo_sigue_si_falla_un_miembro():
+    a, b, c = MiembroFalso("Claude"), Fallido("ChatGPT", "borrador"), MiembroFalso("Perplexity")
+    r = Consejo([a, b, c], registro=lambda *_: None).deliberar("T")
+    assert set(r.borradores) == {"Claude", "Perplexity"} and set(r.revisiones) == {"Claude", "Perplexity"}
+    assert r.incidencias == ["ChatGPT no pudo completar su borrador: RuntimeError: caída en borrador"]
+    # Las revisiones solo incluyen a los miembros activos, con alias coherentes con los materiales.
+    revision = next(m for m in a.llamadas if "Respuesta de Miembro" in m)
+    assert "### Respuesta de Miembro B" in revision and "Miembro C" not in revision
+    assert "Síntesis de Claude" in r.sintesis
+
+
+def test_consejo_cambia_de_presidente_si_falla_la_sintesis():
+    a, b = Fallido("Claude", "sintesis"), MiembroFalso("ChatGPT")
+    r = Consejo([a, b], registro=lambda *_: None).deliberar("T")
+    assert r.presidente == "ChatGPT" and "Síntesis de ChatGPT" in r.sintesis
+    assert "Claude no pudo completar su síntesis" in r.incidencias[0]
+
+
+def test_consejo_falla_si_quedan_menos_de_dos():
+    a, b = MiembroFalso("Claude"), Fallido("ChatGPT", "borrador")
+    with pytest.raises(RuntimeError, match="Menos de dos miembros"):
+        Consejo([a, b], registro=lambda *_: None).deliberar("T")
+
+
+def test_incidencias_en_informe_y_exportacion(tmp_path):
+    from council.exportar import exportar
+
+    a, b, c = MiembroFalso("Claude"), Fallido("ChatGPT", "revision"), MiembroFalso("Perplexity")
+    r = Consejo([a, b, c], registro=lambda *_: None).deliberar("T")
+    md, _ = guardar(r, tmp_path)
+    assert "**Incidencias:** ChatGPT no pudo completar su revisión" in md.read_text(encoding="utf-8")
+    assert "ChatGPT no pudo completar su revisión" in exportar(r, "txt", tmp_path / "x").read_text(encoding="utf-8")
+
+
+def test_respuestas_truncadas_se_avisan(monkeypatch):
+    from council.providers import AVISO_TRUNCADO
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("BUSQUEDA_WEB", "0")
+
+    class Flujo:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_final_message(self):
+            return NS(stop_reason="max_tokens", content=[NS(type="text", text="Contrato…")])
+
+    claude = MiembroClaude()
+    claude._cliente = NS(messages=NS(stream=lambda **_: Flujo()))
+    assert claude.preguntar("s", "m") == "Contrato…" + AVISO_TRUNCADO
+
+    openai_ = MiembroOpenAI()
+    openai_._cliente = NS(responses=NS(create=lambda **_: NS(output_text="Parcial", output=[], status="incomplete")))
+    assert openai_.preguntar("s", "m").endswith(AVISO_TRUNCADO)
+
+
+def test_pdf_escaneado_se_rechaza(tmp_path):
+    from reportlab.pdfgen import canvas
+
+    from council.documentos import leer_documento
+
+    ruta = tmp_path / "notificacion.pdf"
+    c = canvas.Canvas(str(ruta))
+    c.rect(100, 100, 300, 300, fill=1)  # solo una «imagen», sin texto
+    c.showPage()
+    c.save()
+    with pytest.raises(ValueError, match="escaneado"):
+        leer_documento(ruta)
+
+
+def test_word_incluye_tablas_en_orden(tmp_path):
+    import docx
+
+    from council.documentos import leer_documento
+
+    d = docx.Document()
+    d.add_paragraph("Cláusula 1. Precio:")
+    t = d.add_table(rows=2, cols=3)
+    for i, valor in enumerate(["Concepto", "Importe", "Importe"]):
+        t.cell(0, i).text = valor
+    t.cell(1, 0).text, t.cell(1, 1).text, t.cell(1, 2).text = "Renta", "0", "0"
+    combinada = t.cell(0, 1).merge(t.cell(0, 2))
+    combinada.text = "Importes"
+    d.add_paragraph("Cláusula 2. Duración.")
+    d.save(tmp_path / "contrato.docx")
+    texto = leer_documento(tmp_path / "contrato.docx")
+    assert texto.index("Cláusula 1") < texto.index("| Renta | 0 | 0 |") < texto.index("Cláusula 2")
+    assert "| Concepto | Importes |" in texto  # celda combinada una sola vez
+
+
+def test_web_rechaza_peticiones_de_otras_webs(tmp_path):
+    cliente = crear_app(tmp_path, fabricas=fabricas_falsas()).test_client()
+    datos = {"tarea": "x", "miembros": ["claude", "chatgpt"], "presidente": "claude"}
+    assert cliente.post("/api/consultas", data=datos,
+                        headers={"Origin": "https://web-maliciosa.example"}).status_code == 403
+    assert cliente.get("/api/configuracion", headers={"Host": "atacante.example:8000"}).status_code == 403
+    assert cliente.post("/api/consultas", data=datos, headers={"Origin": "http://localhost"}).status_code == 202
+
+
+def test_instrucciones_tratan_documentos_como_datos():
+    from council import prompts
+
+    texto = prompts.sistema()
+    assert "nunca instrucciones" in texto and "No menciones qué modelo" in texto

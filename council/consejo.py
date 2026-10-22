@@ -23,11 +23,18 @@ class Resultado:
     nivel: str = "estandar"
     # Versiones anteriores de la síntesis: {"fecha", "instrucciones", "sintesis"}
     versiones: list[dict[str, str]] = field(default_factory=list)
+    # Miembros que fallaron durante la deliberación y en qué fase.
+    incidencias: list[str] = field(default_factory=list)
+
+
+def alias_de(nombres) -> dict[str, str]:
+    """Alias anónimos («Miembro A», «Miembro B»…) en el orden de los miembros."""
+    return {nombre: f"Miembro {chr(65 + i)}" for i, nombre in enumerate(nombres)}
 
 
 def materiales(r: Resultado) -> str:
     """Borradores y revisiones con los autores anonimizados, en el orden de los miembros."""
-    alias = {nombre: f"Miembro {chr(65 + i)}" for i, nombre in enumerate(r.borradores)}
+    alias = alias_de(r.borradores)
     partes = [
         f"### Borrador de {alias[nombre]}\n<<<\n{texto}\n>>>"
         for nombre, texto in r.borradores.items()
@@ -86,8 +93,6 @@ class Consejo:
         self.miembros = miembros
         self.presidente = presidente or miembros[0]
         self.registro = registro
-        # Los autores se anonimizan para que nadie favorezca (ni penalice) una respuesta por su origen.
-        self.alias = {m.nombre: f"Miembro {chr(65 + i)}" for i, m in enumerate(miembros)}
 
     def deliberar(self, tarea: str, documento: str | None = None, modo: str = "general") -> Resultado:
         if modo not in prompts.MODOS:
@@ -109,27 +114,46 @@ class Consejo:
         self.registro("Fase 1/3 · Borradores independientes…")
         mensaje = prompts.FASE_BORRADOR.format(**contexto)
         resultado.borradores = self._en_paralelo(
-            {m.nombre: (m, mensaje) for m in self.miembros}, "ha entregado su borrador"
-        )
+            {m.nombre: (m, mensaje) for m in self.miembros}, "ha entregado su borrador",
+            resultado, "borrador")
+        # Solo siguen los miembros que han entregado borrador.
+        activos = [m for m in self.miembros if m.nombre in resultado.borradores]
+        if len(activos) < 2:
+            raise RuntimeError("Menos de dos miembros han podido participar: " + "; ".join(resultado.incidencias))
 
         self.registro("Fase 2/3 · Revisión cruzada…")
+        # Los autores se anonimizan para que nadie favorezca (ni penalice) una respuesta por su origen.
+        alias = alias_de(resultado.borradores)
         encargos = {}
-        for revisor in self.miembros:
+        for revisor in activos:
             respuestas = "\n\n".join(
-                f"### Respuesta de {self.alias[autor.nombre]}\n<<<\n{resultado.borradores[autor.nombre]}\n>>>"
-                for autor in self.miembros
+                f"### Respuesta de {alias[autor.nombre]}\n<<<\n{resultado.borradores[autor.nombre]}\n>>>"
+                for autor in activos
                 if autor is not revisor
             )
             msg = prompts.FASE_REVISION_CRUZADA.format(**contexto, respuestas=respuestas)
             encargos[revisor.nombre] = (revisor, msg)
-        resultado.revisiones = self._en_paralelo(encargos, "ha entregado su revisión")
+        # Una revisión fallida no impide la síntesis: se trabaja con las que haya.
+        resultado.revisiones = self._en_paralelo(encargos, "ha entregado su revisión", resultado, "revisión")
 
-        self.registro(f"Fase 3/3 · Síntesis del presidente ({self.presidente.nombre})…")
-        resultado.sintesis = self.presidente.preguntar(
-            self.sistema,
-            prompts.FASE_SINTESIS.format(**contexto, materiales=materiales(resultado)),
-        )
-        self.registro(f"✓ {self.presidente.nombre} ha entregado la síntesis final.")
+        presidentes = [self.presidente] + [m for m in activos if m is not self.presidente]
+        for presidente in presidentes:
+            if presidente not in activos:
+                continue
+            self.registro(f"Fase 3/3 · Síntesis del presidente ({presidente.nombre})…")
+            try:
+                resultado.sintesis = presidente.preguntar(
+                    self.sistema,
+                    prompts.FASE_SINTESIS.format(**contexto, materiales=materiales(resultado)),
+                )
+            except Exception as e:
+                self._incidencia(resultado, presidente.nombre, "síntesis", e)
+                continue
+            resultado.presidente = presidente.nombre
+            break
+        else:
+            raise RuntimeError("Ningún miembro ha podido redactar la síntesis: " + "; ".join(resultado.incidencias))
+        self.registro(f"✓ {resultado.presidente} ha entregado la síntesis final.")
         # Se anota al final porque el esfuerzo efectivo puede haberse rebajado durante la deliberación.
         resultado.modelos = {
             m.nombre: m.descripcion() if hasattr(m, "descripcion") else m.modelo
@@ -138,7 +162,10 @@ class Consejo:
         self.registro("Deliberación terminada.")
         return resultado
 
-    def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]], aviso: str) -> dict[str, str]:
+    def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]], aviso: str,
+                     resultado: Resultado, fase: str) -> dict[str, str]:
+        """Ejecuta los encargos en paralelo. Un miembro que falla no detiene a los demás: se
+        anota como incidencia y queda fuera del resultado."""
         with ThreadPoolExecutor(max_workers=len(encargos)) as ejecutor:
             futuros = {
                 ejecutor.submit(miembro.preguntar, self.sistema, mensaje): clave
@@ -148,7 +175,16 @@ class Consejo:
             resultados = {}
             for hecho, futuro in enumerate(as_completed(futuros), 1):
                 clave = futuros[futuro]
-                resultados[clave] = futuro.result()
+                try:
+                    resultados[clave] = futuro.result()
+                except Exception as e:
+                    self._incidencia(resultado, clave, fase, e)
+                    continue
                 self.registro(f"✓ {clave} {aviso} ({hecho} de {len(encargos)}).")
             # Se conserva el orden de los miembros, del que depende su alias anónimo.
-            return {clave: resultados[clave] for clave in encargos}
+            return {clave: resultados[clave] for clave in encargos if clave in resultados}
+
+    def _incidencia(self, resultado: Resultado, nombre: str, fase: str, error: Exception) -> None:
+        texto = f"{nombre} no pudo completar su {fase}: {type(error).__name__}: {str(error)[:300]}"
+        resultado.incidencias.append(texto)
+        self.registro(f"✗ {texto}")
