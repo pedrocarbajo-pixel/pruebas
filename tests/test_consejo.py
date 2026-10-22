@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace as NS
@@ -776,3 +777,57 @@ def test_web_varios_documentos_con_excel(tmp_path):
         "tarea": "T", "miembros": ["claude", "chatgpt"], "presidente": "claude",
         "documento": [(io.BytesIO(b"x"), "macro.exe")]})
     assert rechazo.status_code == 400 and "macro.exe" in rechazo.get_json()["error"]
+
+
+def test_servidor_mcp_flujo_completo(tmp_path, monkeypatch):
+    import anyio
+
+    from council import mcp_servidor
+    from council.trabajos import GestorConsultas
+
+    monkeypatch.setattr(mcp_servidor, "ESPERA", 5)
+    gestor = GestorConsultas(tmp_path, fabricas_falsas())
+    servidor = mcp_servidor.crear_servidor(
+        gestor, disponibles=lambda: {"claude": True, "chatgpt": True, "perplexity": False})
+
+    def llamar(nombre, **argumentos):
+        resultado = anyio.run(servidor.call_tool, nombre, argumentos)
+        return resultado.content[0].text
+
+    excel = _libro_excel(tmp_path / "liquidacion.xlsx")
+    respuesta = llamar("convocar_consejo", tarea="Revisa la liquidación del cliente con DNI 12345678Z",
+                       tipo_trabajo="informe_tributario", archivos=[str(excel)],
+                       texto_adicional="Nota del usuario")
+    assert "Consejo convocado con 2 documento(s)" in respuesta and "Claude, ChatGPT" in respuesta
+    id_consulta = respuesta.split("id_consulta=")[1].split(".")[0]
+
+    informe = llamar("estado_consulta", id_consulta=id_consulta)
+    assert informe.startswith("Estado: terminada (versión 1).")
+    assert "INFORME DEL PRESIDENTE:" in informe and "Síntesis de Claude" in informe
+    assert "seudonimizados (1 marcadores" in informe and "12345678Z" not in informe
+    assert "_presidente.docx" in informe
+
+    assert "en preparación" in llamar("version_corregida", id_consulta=id_consulta, instrucciones="Más citas")
+    assert "Versión corregida por Claude" in llamar("estado_consulta", id_consulta=id_consulta)
+
+    ruta = llamar("exportar_informe", id_consulta=id_consulta, formato="pdf").split("guardado en: ")[1]
+    assert ruta.endswith("_v2_presidente.pdf") and Path(ruta).is_file()
+
+    assert "sin clave de API para perplexity" in llamar("convocar_consejo", tarea="T", miembros=["perplexity"])
+    assert "formato no admitido" in llamar("convocar_consejo", tarea="T", archivos=["/tmp/x.exe"])
+    assert "No existe la consulta" in llamar("exportar_informe", id_consulta="otra")
+
+
+def test_instalar_en_claude_conserva_otros_servidores(tmp_path):
+    from council.instalar_claude import registrar
+
+    configuracion = tmp_path / "claude_desktop_config.json"
+    configuracion.write_text(json.dumps({"mcpServers": {"otro": {"command": "x"}}, "tema": "oscuro"}))
+    copia = registrar(configuracion, Path("/ruta/python"), Path("/ruta/consejo_mcp.py"))
+    datos = json.loads(configuracion.read_text())
+    assert datos["mcpServers"]["otro"] == {"command": "x"} and datos["tema"] == "oscuro"
+    assert datos["mcpServers"]["consejo-llm"] == {"command": "/ruta/python", "args": ["/ruta/consejo_mcp.py"]}
+    assert copia.is_file() and "otro" in copia.read_text()
+    # Sin archivo previo, lo crea (y sin copia de seguridad).
+    nueva = tmp_path / "nueva" / "claude_desktop_config.json"
+    assert registrar(nueva, Path("/p"), Path("/s")) is None and "consejo-llm" in nueva.read_text()

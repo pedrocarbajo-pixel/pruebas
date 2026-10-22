@@ -68,6 +68,19 @@ pip install -r requirements.txt
 cp .env.example .env      # rellene las claves; se cargan automáticamente al arrancar
 ```
 
+## Uso desde la aplicación de Claude
+
+El consejo puede convocarse desde una conversación con Claude (aplicación de escritorio o Claude Code) mediante MCP, el estándar con el que Claude usa herramientas externas.
+
+1. Tenga el consejo instalado y verificado (`bash iniciar.sh`).
+2. Ejecute **una sola vez** `bash instalar_en_claude.sh` (en Windows, `instalar_en_claude.bat`). Añade el consejo a la configuración de Claude conservando los demás conectores y guarda una copia de seguridad.
+3. Cierre por completo la aplicación de Claude (Cmd + Q) y vuelva a abrirla.
+4. Pídale a Claude, por ejemplo: «Convoca al consejo para un informe tributario sobre…», o «Que el consejo revise el contrato ~/Documents/contrato.pdf».
+
+Claude dispone de cinco herramientas: `convocar_consejo`, `estado_consulta` (espera y devuelve el progreso o el informe), `version_corregida`, `exportar_informe` (Word, PDF, HTML, Markdown o texto) y `configuracion_consejo`. Los archivos se indican por su ruta en el ordenador; el texto que aparezca en la conversación también puede enviarse al consejo.
+
+**Privacidad:** si la consulta se seudonimiza, Claude recibe el informe con los marcadores ([DNI_1]…); los datos reales solo están en los archivos guardados en su ordenador. Tenga en cuenta que lo que escriba en la conversación con Claude lo recibe Anthropic, como en cualquier otro uso de Claude.
+
 ## Interfaz web
 
 ```bash

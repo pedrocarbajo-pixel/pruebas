@@ -9,9 +9,7 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
-import uuid
 import webbrowser
-from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
@@ -21,26 +19,24 @@ from .documentos import EXTENSIONES, combinar, leer_documento
 from .prompts import MODOS
 from .providers import NIVELES
 from .exportar import FORMATOS
-from .servicio import FABRICAS, ejecutar, exportar_presidente, refinar
+from .servicio import NOMBRES, exportar_presidente, miembros_disponibles
+from .trabajos import ConsultaNoEncontrada, ConsultaOcupada, GestorConsultas
 
-CLAVES_API = {
-    "claude": "ANTHROPIC_API_KEY",
-    "chatgpt": "OPENAI_API_KEY",
-    "perplexity": "PERPLEXITY_API_KEY",
-}
-NOMBRES = {"claude": "Claude", "chatgpt": "ChatGPT", "perplexity": "Perplexity"}
 
 
 def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = None) -> Flask:
     app = Flask(__name__, static_folder="static")
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
-    consultas: dict[str, dict] = {}
-    cerrojo = threading.Lock()
+    gestor = GestorConsultas(carpeta_salida, fabricas)
 
     def disponibles() -> dict[str, bool]:
-        if fabricas:
-            return {clave: True for clave in fabricas}
-        return {clave: bool(os.getenv(var)) for clave, var in CLAVES_API.items()}
+        return {clave: True for clave in fabricas} if fabricas else miembros_disponibles()
+
+    def consultar(id_consulta: str) -> dict:
+        try:
+            return gestor.estado(id_consulta)
+        except ConsultaNoEncontrada:
+            abort(404)
 
     @app.get("/")
     def inicio():
@@ -90,93 +86,46 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
                     leidos.append((Path(fichero.filename).name, leer_documento(ruta)))
                 except Exception as e:
                     return jsonify(error=f"No se pudo leer «{fichero.filename}»: {e}"), 400
-        documento = combinar(leidos)
 
-        id_consulta = uuid.uuid4().hex
-        estado = {"estado": "en_curso", "mensajes": [], "error": None, "salida": None}
-        with cerrojo:
-            consultas[id_consulta] = estado
-
-        def anotar(mensaje: str) -> None:
-            with cerrojo:
-                estado["mensajes"].append(f"{datetime.now():%H:%M:%S} · {mensaje}")
-
-        def trabajo() -> None:
-            try:
-                salida = ejecutar(
-                    tarea=tarea, documento=documento, modo=modo, miembros=miembros,
-                    presidente=presidente, seudonimizar=seudonimizar, nivel=nivel,
-                    carpeta=carpeta_salida, registro=anotar, fabricas=fabricas,
-                )
-                with cerrojo:
-                    estado.update(estado="terminada", salida=salida)
-            except Exception as e:  # se muestra al usuario en lugar de perderse en el hilo
-                with cerrojo:
-                    estado.update(estado="error", error=f"{type(e).__name__}: {e}")
-
-        threading.Thread(target=trabajo, daemon=True).start()
+        id_consulta = gestor.iniciar(tarea=tarea, documento=combinar(leidos), modo=modo, miembros=miembros,
+                                     presidente=presidente, seudonimizar=seudonimizar, nivel=nivel)
         return jsonify(id=id_consulta), 202
 
     @app.post("/api/consultas/<id_consulta>/refinar")
     def refinar_consulta(id_consulta: str):
         instrucciones = request.form.get("instrucciones", "").strip()
-        with cerrojo:
-            estado = consultas.get(id_consulta)
-            if estado is None:
-                abort(404)
+        try:
+            gestor.estado(id_consulta)
             if not instrucciones:
                 return jsonify(error="Escriba qué debe cambiar en la nueva versión."), 400
-            if estado["estado"] == "en_curso" or not estado["salida"]:
-                return jsonify(error="Espere a que termine el trabajo en curso."), 409
-            estado.update(estado="en_curso", error=None)
-            salida = estado["salida"]
-
-        def anotar(mensaje: str) -> None:
-            with cerrojo:
-                estado["mensajes"].append(f"{datetime.now():%H:%M:%S} · {mensaje}")
-
-        def trabajo() -> None:
-            try:
-                refinar(salida, instrucciones, registro=anotar, fabricas=fabricas)
-                with cerrojo:
-                    estado.update(estado="terminada")
-            except Exception as e:  # se conserva la versión anterior y se informa del fallo
-                with cerrojo:
-                    estado.update(estado="terminada",
-                                  error=f"No se pudo generar la nueva versión. {type(e).__name__}: {e}")
-
-        threading.Thread(target=trabajo, daemon=True).start()
+            gestor.refinar(id_consulta, instrucciones)
+        except ConsultaNoEncontrada:
+            abort(404)
+        except ConsultaOcupada as e:
+            return jsonify(error=str(e)), 409
         return jsonify(id=id_consulta), 202
 
     @app.get("/api/consultas/<id_consulta>")
     def ver_consulta(id_consulta: str):
-        with cerrojo:
-            estado = consultas.get(id_consulta)
-            if estado is None:
-                abort(404)
-            respuesta = {k: estado[k] for k in ("estado", "error")}
-            respuesta["mensajes"] = list(estado["mensajes"])
-            if estado["salida"]:
-                respuesta["informe"] = estado["salida"].informe.read_text(encoding="utf-8")
-                respuesta["seudonimizados"] = estado["salida"].datos_seudonimizados
-                respuesta["version"] = len(estado["salida"].resultado.versiones) + 1
+        estado = consultar(id_consulta)
+        respuesta = {k: estado[k] for k in ("estado", "error", "mensajes")}
+        if estado["salida"]:
+            respuesta["informe"] = estado["salida"].informe.read_text(encoding="utf-8")
+            respuesta["seudonimizados"] = estado["salida"].datos_seudonimizados
+            respuesta["version"] = len(estado["salida"].resultado.versiones) + 1
         return jsonify(respuesta)
 
     @app.get("/api/consultas/<id_consulta>/presidente/<formato>")
     def descargar_presidente(id_consulta: str, formato: str):
-        with cerrojo:
-            estado = consultas.get(id_consulta)
-            salida = estado and estado["salida"]
-            if not salida or formato not in FORMATOS or estado["estado"] == "en_curso":
-                abort(404)
-            ruta = exportar_presidente(salida, formato)
+        estado = consultar(id_consulta)
+        if not estado["salida"] or formato not in FORMATOS or estado["estado"] == "en_curso":
+            abort(404)
+        ruta = exportar_presidente(estado["salida"], formato)
         return send_file(ruta.resolve(), as_attachment=True, download_name=ruta.name)
 
     @app.get("/api/consultas/<id_consulta>/<tipo>")
     def descargar(id_consulta: str, tipo: str):
-        with cerrojo:
-            estado = consultas.get(id_consulta)
-            salida = estado and estado["salida"]
+        salida = consultar(id_consulta)["salida"]
         rutas = {"informe": salida.informe, "registro": salida.registro, "word": salida.word} if salida else {}
         ruta = rutas.get(tipo)
         if not ruta:

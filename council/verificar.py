@@ -14,8 +14,7 @@ import os
 import sys
 
 from .config import cargar_env
-from .servicio import FABRICAS
-from .web import CLAVES_API, NOMBRES
+from .servicio import CLAVES_API, FABRICAS, NOMBRES
 
 SISTEMA = "Responde exclusivamente con la palabra OK."
 MENSAJE = "Prueba de conexión."

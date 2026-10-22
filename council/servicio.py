@@ -6,6 +6,7 @@ Lo comparten la interfaz de línea de órdenes y la interfaz web.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -22,6 +23,17 @@ FABRICAS = {
     "chatgpt": MiembroOpenAI,
     "perplexity": MiembroPerplexity,
 }
+NOMBRES = {"claude": "Claude", "chatgpt": "ChatGPT", "perplexity": "Perplexity"}
+CLAVES_API = {
+    "claude": "ANTHROPIC_API_KEY",
+    "chatgpt": "OPENAI_API_KEY",
+    "perplexity": "PERPLEXITY_API_KEY",
+}
+
+
+def miembros_disponibles() -> dict[str, bool]:
+    """Miembros con clave de API configurada."""
+    return {clave: bool(os.getenv(var)) for clave, var in CLAVES_API.items()}
 
 
 @dataclass
@@ -31,7 +43,8 @@ class Salida:
     registro: Path
     mapa: Path | None
     datos_seudonimizados: int
-    word: Path | None = None  # informe del presidente en Word    # Contexto necesario para pedir nuevas versiones (solo en memoria; no se guarda en disco).
+    word: Path | None = None  # informe del presidente en Word
+    # Contexto necesario para pedir nuevas versiones (solo en memoria; no se guarda en disco).
     presidente: str = "claude"
     documento: str | None = None
     seudonimizar: bool = False
