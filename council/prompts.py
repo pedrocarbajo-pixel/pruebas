@@ -166,6 +166,104 @@ algo que no puede sostenerse con seguridad, mantenlo fuera o márcalo con «No p
 Añade al final un apartado «## Cambios respecto a la versión anterior» con la lista de modificaciones."""
 
 
+# --- Equipos de cinco agentes (opciones A y B) -----------------------------------------------
+
+DELIBERACIONES = {  # clave: (nombre visible, descripción breve)
+    "consejo": ("C · Consejo", "Claude, ChatGPT y Perplexity: borradores, revisión cruzada anónima y síntesis"),
+    "agentes_claude": ("A · Agentes de Claude", "Claude con cinco agentes de perspectivas distintas"),
+    "consejo_agentes": ("B · Consejo con agentes", "cada IA trabaja con sus cinco agentes y después delibera el consejo"),
+}
+
+ROLES = {  # clave: (nombre, misión)
+    "esceptico": ("El escéptico", """\
+Busca los riesgos. Cuestiona cada supuesto, cada interpretación y cada cifra; identifica \
+contingencias, puntos débiles, errores, interpretaciones desfavorables de la Administración o de la \
+contraparte, y los peores escenarios (económicos, sancionadores o procesales) con su probabilidad."""),
+    "optimista": ("El optimista", """\
+Ve las oportunidades. Identifica las ventajas, los argumentos favorables, las vías de defensa, los \
+beneficios fiscales o contractuales aplicables y las mejoras posibles. Hazlo con fundamento: no \
+minimices riesgos reales ni presentes como seguras posiciones discutibles."""),
+    "practico": ("El práctico", """\
+Piensa en la ejecución. Traduce el asunto en acciones concretas: qué hacer, en qué orden, con qué \
+plazos, documentos, costes y responsables; qué es urgente y qué puede esperar; qué opción es viable \
+en la práctica y no solo en teoría."""),
+    "raiz": ("El de la raíz", """\
+Ve a la raíz. Identifica la verdadera cuestión jurídica o tributaria de fondo, el problema subyacente \
+detrás de lo que se pregunta, los supuestos implícitos y si la pregunta está bien planteada; distingue \
+síntomas de causas y señala qué hechos determinan realmente la respuesta."""),
+    "ojos_nuevos": ("El de ojos nuevos", """\
+Míralo todo desde fuera, con ojos nuevos. Sin ideas preconcebidas, detecta lo que los especialistas \
+dan por sentado, las explicaciones alternativas, cómo lo vería un tercero (un juez, un inspector, la \
+contraparte, el propio cliente) y los enfoques de otras disciplinas que puedan cambiar la conclusión."""),
+}
+
+INSTRUCCIONES_AGENTE = """
+TU PAPEL EN EL EQUIPO: {nombre}. {mision}
+Formas parte de un equipo de cinco agentes con perspectivas distintas; cada uno analiza la tarea por \
+su cuenta. Aborda la tarea desde tu perspectiva con el mismo rigor (fuentes concretas, «No puedo \
+confirmar esto» cuando proceda). No menciones tu papel ni el de los demás: los análisis se revisan \
+de forma anónima."""
+
+
+def sistema_agente(nivel: str, rol: str) -> str:
+    nombre, mision = ROLES[rol]
+    return sistema(nivel) + INSTRUCCIONES_AGENTE.format(nombre=nombre, mision=mision)
+
+
+AGENTES_REVISION = """\
+{modo}
+
+TAREA ORIGINAL:
+{tarea}
+{documento}
+A continuación tienes los análisis de los OTROS agentes de tu equipo (anonimizados). Revisa cada uno \
+desde tu perspectiva:
+1. Errores de hecho o de Derecho, citas no verificables o afirmaciones sin respaldo.
+2. Lo que tu perspectiva aporta y ellos han pasado por alto.
+3. Puntos en los que discrepas, con el motivo y la fuente que lo respalda.
+4. Aportaciones valiosas que deben conservarse.
+Termina con una valoración de 1 a 10 para cada análisis y una frase que la justifique.
+
+{respuestas}"""
+
+AGENTES_SINTESIS = """\
+{modo}
+
+Eres el COORDINADOR de un equipo de cinco agentes con perspectivas distintas: el escéptico (riesgos), \
+el optimista (oportunidades), el práctico (ejecución), el de la raíz (cuestión de fondo) y el de ojos \
+nuevos (mirada externa). Integra sus análisis y sus revisiones cruzadas. En las revisiones, los \
+agentes se citan por su número («Agente 3»); la correspondencia con su papel figura en cada título.
+
+TAREA ORIGINAL:
+{tarea}
+{documento}
+{materiales}
+
+{entrega}"""
+
+ENTREGA_EQUIPO = """\
+Entrega la respuesta COMPLETA a la tarea, con la estructura que pide el modo. Incorpora los riesgos \
+del escéptico, las oportunidades fundadas del optimista, los pasos concretos del práctico, la cuestión \
+de fondo identificada por el agente de la raíz y lo que aporte la mirada externa, corrigiendo los \
+errores detectados en las revisiones. Termina con «## Discrepancias internas del equipo» (las que no \
+hayas podido resolver, o «Ninguna»)."""
+
+ENTREGA_FINAL = """\
+Entrega, en este orden:
+## Respuesta final
+(la mejor versión integrada, que corrija los errores detectados en las revisiones cruzadas)
+## Aportaciones de cada perspectiva
+(en una o dos frases por agente: riesgos, oportunidades, pasos, cuestión de fondo y mirada externa)
+## Puntos de consenso
+## Discrepancias entre los agentes
+(para cada una: qué sostiene cada parte, cuál adoptas y por qué; si no puede resolverse, dilo)
+## Fuentes citadas
+(normas, resoluciones y enlaces que respaldan la respuesta final; marca las que no se hayan podido verificar)
+## Cuestiones que requieren verificación humana
+## Nivel de confianza
+(Alto / Medio / Bajo, con justificación breve)"""
+
+
 def bloque_documento(documento: str | None) -> str:
     if not documento:
         return ""

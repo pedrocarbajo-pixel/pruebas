@@ -26,6 +26,8 @@ class MiembroFalso:
             self.llamadas.append(mensaje)
         if "INDICACIONES DEL USUARIO" in mensaje:
             return f"## Respuesta final\nVersión corregida por {self.nombre}"
+        if "COORDINADOR" in mensaje:
+            return f"## Respuesta final\nSíntesis del equipo de {self.nombre}"
         if "PRESIDENTE" in mensaje:
             return f"## Respuesta final\nSíntesis de {self.nombre}: {mensaje[-60:]}"
         if "Respuesta de Miembro" in mensaje:
@@ -994,3 +996,112 @@ def test_pdf_con_paginas_escaneadas_lo_avisa(tmp_path):
     texto = leer_documento(ruta)
     assert "Propuesta de liquidacion" in texto
     assert "las páginas 2 de «notificacion.pdf» no contienen texto" in texto
+
+
+# --- Opciones A y B: equipos de cinco agentes -----------------------------------------------
+
+class Contador:
+    """Fábrica de miembros falsos que registra cada llamada (sistema, mensaje) de todas sus instancias."""
+
+    def __init__(self, nombre, falla_rol=None):
+        self.nombre, self.falla_rol, self.llamadas = nombre, falla_rol, []
+        self._cerrojo = threading.Lock()
+
+    def __call__(self, nivel="estandar"):
+        contador = self
+
+        class Instancia(MiembroFalso):
+            def preguntar(self, sistema, mensaje):
+                with contador._cerrojo:
+                    contador.llamadas.append((sistema, mensaje))
+                if contador.falla_rol and f"TU PAPEL EN EL EQUIPO: {contador.falla_rol}" in sistema:
+                    raise RuntimeError("caída simulada")
+                return super().preguntar(sistema, mensaje)
+
+        return Instancia(self.nombre)
+
+
+def test_opcion_a_agentes_de_claude(tmp_path):
+    from council import prompts
+
+    claude = Contador("Claude")
+    salida = ejecutar("Informe IRPF", modo="informe_tributario", deliberacion="agentes_claude",
+                      carpeta=tmp_path, registro=lambda *_: None, fabricas={"claude": claude})
+    r = salida.resultado
+    assert len(claude.llamadas) == 11  # 5 análisis + 5 revisiones + coordinador
+    roles = [nombre for nombre, _ in prompts.ROLES.values()]
+    # Cada papel trabaja exactamente una vez en la fase de análisis (y otra en la revisión).
+    for rol in roles:
+        assert sum(f"TU PAPEL EN EL EQUIPO: {rol}." in sist for sist, _ in claude.llamadas) == 2
+    # Revisión anónima: los revisores ven «Agente N», nunca el papel de los demás.
+    revisiones = [m for _, m in claude.llamadas if "OTROS agentes" in m]
+    assert len(revisiones) == 5
+    for m in revisiones:
+        assert m.count("### Análisis del Agente") == 4 and not any(rol in m for rol in roles)
+    # El coordinador sí conoce los papeles, y entrega con la estructura del informe final.
+    coordinador = next(m for _, m in claude.llamadas if "COORDINADOR" in m)
+    assert all(rol in coordinador for rol in roles) and "## Aportaciones de cada perspectiva" in coordinador
+    assert r.deliberacion == "agentes_claude" and set(r.borradores) == set(roles)
+    assert r.sintesis.endswith("Síntesis del equipo de Claude") and salida.presidente == "claude"
+    texto = salida.informe.read_text(encoding="utf-8")
+    assert "**Deliberación:** A · Agentes de Claude" in texto and "Análisis independientes de los agentes" in texto
+
+
+def test_opcion_b_consejo_con_agentes(tmp_path):
+    fabricas = {"claude": Contador("Claude"), "chatgpt": Contador("ChatGPT"), "perplexity": Contador("Perplexity")}
+    mensajes = []
+    salida = ejecutar("Informe IRPF", deliberacion="consejo_agentes", carpeta=tmp_path,
+                      registro=mensajes.append, fabricas=fabricas)
+    r = salida.resultado
+    llamadas = sum(len(f.llamadas) for f in fabricas.values())
+    assert llamadas == 37  # 3 × (5 + 5 + 1) + 3 revisiones del consejo + presidente
+    assert set(r.equipos) == {"Claude", "ChatGPT", "Perplexity"}
+    assert all(len(e["borradores"]) == 5 and len(e["revisiones"]) == 5 for e in r.equipos.values())
+    # El borrador de cada miembro ante el consejo es la síntesis de su equipo.
+    assert r.borradores["ChatGPT"].endswith("Síntesis del equipo de ChatGPT")
+    entrega_equipo = next(m for _, m in fabricas["claude"].llamadas if "COORDINADOR" in m)
+    assert "## Discrepancias internas del equipo" in entrega_equipo
+    assert "Síntesis de Claude" in r.sintesis  # el presidente del consejo sigue siendo Claude
+    assert sum("✓" in m for m in mensajes) == 13 * 3 + 1  # entregas que avanzan la barra de la web
+    texto = salida.informe.read_text(encoding="utf-8")
+    assert "**Deliberación:** B · Consejo con agentes" in texto and "# Anexo IV" in texto
+    assert "equipo de cinco agentes" in r.modelos["Claude"]
+
+
+def test_equipo_sigue_si_falla_un_agente(tmp_path):
+    claude = Contador("Claude", falla_rol="El optimista")
+    salida = ejecutar("T", deliberacion="agentes_claude", carpeta=tmp_path,
+                      registro=lambda *_: None, fabricas={"claude": claude})
+    r = salida.resultado
+    assert len(r.borradores) == 4 and "El optimista" not in r.borradores
+    assert r.incidencias == ["Claude · El optimista no pudo completar su análisis: RuntimeError: caída simulada"]
+
+
+def test_deliberacion_no_valida():
+    with pytest.raises(ValueError, match="Deliberación desconocida"):
+        ejecutar("T", deliberacion="otra", fabricas=fabricas_falsas())
+
+
+def test_web_y_mcp_aceptan_las_opciones(tmp_path, monkeypatch):
+    import anyio
+
+    from council import mcp_servidor
+    from council.trabajos import GestorConsultas
+
+    cliente = crear_app(tmp_path, fabricas=fabricas_falsas()).test_client()
+    conf = cliente.get("/api/configuracion").get_json()
+    assert [d["id"] for d in conf["deliberaciones"]] == ["consejo", "agentes_claude", "consejo_agentes"]
+    # Opción A sin elegir miembros: se usa solo Claude.
+    r = cliente.post("/api/consultas", data={"tarea": "T", "deliberacion": "agentes_claude"})
+    assert r.status_code == 202, r.get_json()
+    assert cliente.post("/api/consultas", data={"tarea": "T", "deliberacion": "x"}).status_code == 400
+
+    monkeypatch.setattr(mcp_servidor, "ESPERA", 5)
+    servidor = mcp_servidor.crear_servidor(GestorConsultas(tmp_path, fabricas_falsas()),
+                                           disponibles=lambda: {"claude": True, "chatgpt": False, "perplexity": False})
+    respuesta = anyio.run(servidor.call_tool, "convocar_consejo",
+                          {"tarea": "T", "deliberacion": "agentes_claude"}).content[0].text
+    assert "A · Agentes de Claude" in respuesta, respuesta
+    id_consulta = respuesta.split("id_consulta=")[1].split(".")[0]
+    informe = anyio.run(servidor.call_tool, "estado_consulta", {"id_consulta": id_consulta}).content[0].text
+    assert informe.startswith("Estado: terminada") and "Síntesis del equipo de Claude" in informe

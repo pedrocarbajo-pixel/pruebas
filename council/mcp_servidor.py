@@ -19,7 +19,7 @@ from mcp.server.mcpserver import MCPServer
 from .documentos import EXTENSIONES, combinar, leer_documento
 from .exportar import FORMATOS
 from .modelos import candidatos
-from .prompts import MODOS
+from .prompts import DELIBERACIONES, MODOS
 from .servicio import NOMBRES, exportar_presidente, miembros_disponibles
 from .trabajos import ConsultaNoEncontrada, ConsultaOcupada, GestorConsultas
 
@@ -38,7 +38,10 @@ del avance entre llamadas. No presentes ningún resultado como definitivo antes 
 destacando las discrepancias entre miembros y las cuestiones que requieren verificación humana. \
 Recuerda que es un borrador que debe revisar un profesional.
 4. Para corregir el informe usa version_corregida; para obtener Word, PDF, etc., exportar_informe.
-Usa nivel «extremo» solo si el usuario lo pide expresamente: es mucho más lento y costoso."""
+Usa nivel «extremo» solo si el usuario lo pide expresamente: es mucho más lento y costoso.
+Modos de deliberación: «consejo» (C, por defecto); «agentes_claude» (A: Claude con cinco agentes de \
+perspectivas distintas) y «consejo_agentes» (B: cada IA con sus cinco agentes y después el consejo). \
+Usa A o B solo si el usuario lo pide."""
 
 TipoTrabajo = Literal["general", "contrato_revisar", "contrato_redactar", "dictamen_juridico",
                       "informe_tributario", "procedimiento_tributario"]
@@ -79,6 +82,7 @@ def crear_servidor(gestor: GestorConsultas, disponibles=miembros_disponibles) ->
     def convocar_consejo(
         tarea: str,
         tipo_trabajo: TipoTrabajo = "general",
+        deliberacion: Literal["consejo", "agentes_claude", "consejo_agentes"] = "consejo",
         nivel: Literal["estandar", "extremo"] = "estandar",
         archivos: list[str] | None = None,
         texto_adicional: str = "",
@@ -90,6 +94,10 @@ def crear_servidor(gestor: GestorConsultas, disponibles=miembros_disponibles) ->
 
         tipo_trabajo: general, contrato_revisar, contrato_redactar, dictamen_juridico,
         informe_tributario o procedimiento_tributario.
+        deliberacion: «consejo» (C, por defecto: Claude, ChatGPT y Perplexity, 7 llamadas);
+        «agentes_claude» (A: Claude con cinco agentes —escéptico, optimista, práctico, raíz y ojos
+        nuevos—, 11 llamadas); «consejo_agentes» (B: cada IA con sus cinco agentes y después el consejo,
+        37 llamadas con tres miembros: mucho más lento y costoso). Usa A o B solo si el usuario lo pide.
         nivel: «extremo» usa los modelos más capaces con esfuerzo máximo; solo si el usuario lo pide.
         archivos: rutas de archivos del ordenador del usuario (.docx, .pdf, .xlsx, .xlsm, .xls, .csv,
         .txt, .md); admite «~/».
@@ -100,10 +108,10 @@ def crear_servidor(gestor: GestorConsultas, disponibles=miembros_disponibles) ->
         if not tarea.strip():
             return "Error: falta la tarea."
         activos = [m for m, ok in disponibles().items() if ok]
-        elegidos = list(miembros) if miembros else activos
+        elegidos = ["claude"] if deliberacion == "agentes_claude" else (list(miembros) if miembros else activos)
         if sin_clave := [m for m in elegidos if m not in activos]:
             return f"Error: sin clave de API para {', '.join(sin_clave)}. Disponibles: {', '.join(activos)}."
-        if len(elegidos) < 2:
+        if len(elegidos) < 2 and deliberacion != "agentes_claude":
             return "Error: hacen falta al menos dos miembros con clave de API configurada."
         if presidente not in elegidos:
             presidente = elegidos[0]
@@ -124,11 +132,12 @@ def crear_servidor(gestor: GestorConsultas, disponibles=miembros_disponibles) ->
 
         id_consulta = gestor.iniciar(tarea=tarea.strip(), documento=combinar(leidos), modo=tipo_trabajo,
                                      miembros=elegidos, presidente=presidente, seudonimizar=seudonimizar,
-                                     nivel=nivel)
+                                     nivel=nivel, deliberacion=deliberacion)
         adjuntos = f" con {len(leidos)} documento(s)" if leidos else ""
-        return (f"Consejo convocado{adjuntos}. id_consulta={id_consulta}. Miembros: "
-                f"{', '.join(NOMBRES[m] for m in elegidos)}; presidente: {NOMBRES[presidente]}; "
-                f"nivel: {nivel}. La deliberación tarda varios minutos: llama ahora a estado_consulta.")
+        return (f"Consejo convocado{adjuntos}. id_consulta={id_consulta}. Deliberación: "
+                f"{DELIBERACIONES[deliberacion][0]}. Miembros: {', '.join(NOMBRES[m] for m in elegidos)}; "
+                f"presidente: {NOMBRES[presidente]}; nivel: {nivel}. La deliberación tarda varios minutos: "
+                "llama ahora a estado_consulta.")
 
     @servidor.tool()
     def estado_consulta(id_consulta: str) -> str:

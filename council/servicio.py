@@ -12,10 +12,12 @@ from functools import partial
 from pathlib import Path
 
 from . import privacidad
+from .agentes import Equipo, deliberar_con_agentes
 from .consejo import Consejo, Resultado
 from .consejo import refinar as refinar_resultado
 from .informe import guardar
 from .exportar import exportar
+from .prompts import DELIBERACIONES
 from .providers import MiembroClaude, MiembroOpenAI, MiembroPerplexity
 
 FABRICAS = {
@@ -63,8 +65,14 @@ def ejecutar(
     carpeta: str | Path = "salidas",
     registro=print,
     fabricas: dict | None = None,
+    deliberacion: str = "consejo",
 ) -> Salida:
+    """`deliberacion`: «consejo» (C), «agentes_claude» (A) o «consejo_agentes» (B)."""
     fabricas = fabricas or FABRICAS
+    if deliberacion not in DELIBERACIONES:
+        raise ValueError(f"Deliberación desconocida: {deliberacion}. Opciones: {', '.join(DELIBERACIONES)}")
+    if deliberacion == "agentes_claude":
+        miembros, presidente = ["claude"], "claude"  # opción A: solo Claude, con su equipo
     miembros = miembros or list(fabricas)
     if presidente not in miembros:
         raise ValueError("El presidente debe ser uno de los miembros seleccionados.")
@@ -78,12 +86,20 @@ def ejecutar(
         documento = documento or None
         registro(f"Seudonimizados {len(mapa)} datos.")
 
-    instancias = {clave: fabricas[clave](nivel=nivel) for clave in miembros}
-    consejo = Consejo(list(instancias.values()), presidente=instancias[presidente],
-                      registro=registro, nivel=nivel)
-    resultado = consejo.deliberar(tarea, documento, modo=modo)
-    # Si el presidente falló y otro miembro redactó la síntesis, las versiones corregidas se le piden a este.
-    presidente = next(clave for clave, m in instancias.items() if m.nombre == resultado.presidente)
+    if deliberacion == "agentes_claude":
+        resultado = deliberar_con_agentes(partial(fabricas["claude"], nivel=nivel), NOMBRES["claude"],
+                                          tarea, documento, modo=modo, nivel=nivel, registro=registro)
+    else:
+        instancias = {clave: fabricas[clave](nivel=nivel) for clave in miembros}
+        equipos = {}
+        if deliberacion == "consejo_agentes":
+            equipos = {m.nombre: Equipo(partial(fabricas[clave], nivel=nivel), m.nombre, nivel, registro)
+                       for clave, m in instancias.items()}
+        consejo = Consejo(list(instancias.values()), presidente=instancias[presidente],
+                          registro=registro, nivel=nivel, equipos=equipos)
+        resultado = consejo.deliberar(tarea, documento, modo=modo)
+        # Si el presidente falló y otro miembro redactó la síntesis, las versiones corregidas se le piden a este.
+        presidente = next(clave for clave, m in instancias.items() if m.nombre == resultado.presidente)
 
     salida = Salida(resultado, Path(), Path(), None, len(mapa), presidente=presidente,
                     documento=documento, seudonimizar=seudonimizar, mapa_datos=mapa,

@@ -12,6 +12,18 @@ Herramienta que somete una tarea compleja o sensible —jurídica o tributaria�
 
 Con tres miembros, cada consulta hace 7 llamadas (3 borradores + 3 revisiones + 1 síntesis); con dos, 5.
 
+## Modos de deliberación
+
+| Modo | Quién trabaja | Llamadas a los modelos |
+|---|---|---|
+| **C · Consejo** (por defecto) | Claude, ChatGPT y Perplexity: borradores, revisión cruzada anónima y síntesis del presidente | 7 (con tres miembros) |
+| **A · Agentes de Claude** | Solo Claude, con cinco agentes: el escéptico (riesgos), el optimista (oportunidades), el práctico (ejecución), el de la raíz (cuestión de fondo) y el de ojos nuevos (mirada externa) | 11 |
+| **B · Consejo con agentes** | Cada IA trabaja con sus cinco agentes; la respuesta de cada equipo pasa después al consejo | 37 (con tres miembros) |
+
+En A y B, los cinco agentes analizan la tarea por separado, después se revisan entre ellos identificados solo como «Agente N» (número asignado al azar en cada consulta) y un coordinador, que sí conoce el papel de cada uno, integra el resultado. El trabajo interno de los equipos queda en los anexos del informe. La misión de cada papel está en `council/prompts.py` (`ROLES`).
+
+El anonimato entre agentes de una misma IA es parcial: el número oculta quién es quién, pero el contenido puede delatar el papel (el escéptico habla de riesgos). Cinco agentes de un mismo modelo comparten sus conocimientos y sus lagunas; B añade además el contraste entre modelos distintos.
+
 ## Tipos de trabajo
 
 | Modo | Uso |

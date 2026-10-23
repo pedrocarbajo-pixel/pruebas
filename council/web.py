@@ -17,7 +17,7 @@ from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
 from .config import cargar_env
 from .documentos import EXTENSIONES, combinar, leer_documento
-from .prompts import MODOS
+from .prompts import DELIBERACIONES, MODOS
 from .providers import NIVELES
 from .exportar import FORMATOS
 from .servicio import NOMBRES, exportar_presidente, miembros_disponibles
@@ -59,6 +59,7 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
     def configuracion():
         return jsonify(
             modos=[{"id": k, "nombre": v[0]} for k, v in MODOS.items()],
+            deliberaciones=[{"id": k, "nombre": v[0], "descripcion": v[1]} for k, v in DELIBERACIONES.items()],
             formatos=[{"id": k, "nombre": v[1]} for k, v in FORMATOS.items()],
             miembros=[{"id": k, "nombre": NOMBRES.get(k, k), "disponible": ok}
                       for k, ok in disponibles().items()],
@@ -72,6 +73,7 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
         presidente = request.form.get("presidente", "")
         seudonimizar = request.form.get("seudonimizar") == "on"
         nivel = request.form.get("nivel", "estandar")
+        deliberacion = request.form.get("deliberacion", "consejo")
 
         if not tarea:
             return jsonify(error="Escriba la tarea."), 400
@@ -79,8 +81,14 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
             return jsonify(error="Modo no válido."), 400
         if nivel not in NIVELES:
             return jsonify(error="Nivel no válido."), 400
+        if deliberacion not in DELIBERACIONES:
+            return jsonify(error="Modo de deliberación no válido."), 400
         activos = disponibles()
-        if len(miembros) < 2 or any(not activos.get(m) for m in miembros):
+        if deliberacion == "agentes_claude":
+            if not activos.get("claude"):
+                return jsonify(error="La opción A necesita la clave de API de Claude."), 400
+            miembros, presidente = ["claude"], "claude"
+        elif len(miembros) < 2 or any(not activos.get(m) for m in miembros):
             return jsonify(error="Seleccione al menos dos miembros con clave de API configurada."), 400
         if presidente not in miembros:
             return jsonify(error="El presidente debe ser uno de los miembros seleccionados."), 400
@@ -101,7 +109,8 @@ def crear_app(carpeta_salida: str | Path = "salidas", fabricas: dict | None = No
                     return jsonify(error=f"No se pudo leer «{fichero.filename}»: {e}"), 400
 
         id_consulta = gestor.iniciar(tarea=tarea, documento=combinar(leidos), modo=modo, miembros=miembros,
-                                     presidente=presidente, seudonimizar=seudonimizar, nivel=nivel)
+                                     presidente=presidente, seudonimizar=seudonimizar, nivel=nivel,
+                                     deliberacion=deliberacion)
         return jsonify(id=id_consulta), 202
 
     @app.post("/api/consultas/<id_consulta>/refinar")

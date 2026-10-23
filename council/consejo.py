@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from typing import Callable
 from datetime import datetime, timezone
 
 from . import prompts
@@ -25,6 +26,29 @@ class Resultado:
     versiones: list[dict[str, str]] = field(default_factory=list)
     # Miembros que fallaron durante la deliberación y en qué fase.
     incidencias: list[str] = field(default_factory=list)
+    # «consejo» (C), «agentes_claude» (A) o «consejo_agentes» (B); véase prompts.DELIBERACIONES.
+    deliberacion: str = "consejo"
+    # Opción B: trabajo interno de cada equipo {miembro: {"borradores": {...}, "revisiones": {...}}}.
+    equipos: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
+
+
+def en_paralelo(encargos: dict[str, Callable[[], str]], al_entregar, al_fallar) -> dict[str, str]:
+    """Ejecuta los encargos en paralelo y devuelve los resultados en el orden de `encargos`.
+
+    Un encargo que falla no detiene a los demás: se notifica con `al_fallar(clave, error)` y
+    queda fuera del resultado. Cada entrega se notifica con `al_entregar(clave, hechos, total)`."""
+    with ThreadPoolExecutor(max_workers=len(encargos)) as ejecutor:
+        futuros = {ejecutor.submit(funcion): clave for clave, funcion in encargos.items()}
+        resultados = {}
+        for hecho, futuro in enumerate(as_completed(futuros), 1):
+            clave = futuros[futuro]
+            try:
+                resultados[clave] = futuro.result()
+            except Exception as e:
+                al_fallar(clave, e)
+                continue
+            al_entregar(clave, hecho, len(encargos))
+        return {clave: resultados[clave] for clave in encargos if clave in resultados}
 
 
 def alias_de(nombres) -> dict[str, str]:
@@ -83,7 +107,7 @@ class Consejo:
     """
 
     def __init__(self, miembros: list[Miembro], presidente: Miembro | None = None, registro=print,
-                 nivel: str = "estandar"):
+                 nivel: str = "estandar", equipos: dict | None = None):
         if len(miembros) < 2:
             raise ValueError("El consejo necesita al menos dos miembros.")
         if nivel not in NIVELES:
@@ -93,6 +117,8 @@ class Consejo:
         self.miembros = miembros
         self.presidente = presidente or miembros[0]
         self.registro = registro
+        # Opción B: {nombre del miembro: Equipo}; su borrador lo elabora su equipo de cinco agentes.
+        self.equipos = equipos or {}
 
     def deliberar(self, tarea: str, documento: str | None = None, modo: str = "general") -> Resultado:
         if modo not in prompts.MODOS:
@@ -107,15 +133,28 @@ class Consejo:
             modo=modo,
             presidente=self.presidente.nombre,
             nivel=self.nivel,
+            deliberacion="consejo_agentes" if self.equipos else "consejo",
         )
 
         if self.nivel == "extremo":
             self.registro("Nivel EXTREMO: modelos más capaces y esfuerzo máximo (más lento y costoso).")
-        self.registro("Fase 1/3 · Borradores independientes…")
+        self.registro("Fase 1/3 · Cada IA trabaja con sus cinco agentes…" if self.equipos
+                      else "Fase 1/3 · Borradores independientes…")
         mensaje = prompts.FASE_BORRADOR.format(**contexto)
+
+        def redactar(miembro: Miembro) -> str:
+            equipo = self.equipos.get(miembro.nombre)
+            if not equipo:
+                return miembro.preguntar(self.sistema, mensaje)
+            trabajo = equipo.deliberar(contexto, final=False)
+            resultado.equipos[miembro.nombre] = {"borradores": trabajo.borradores,
+                                                 "revisiones": trabajo.revisiones}
+            resultado.incidencias.extend(trabajo.incidencias)
+            return trabajo.sintesis
+
+        aviso = "ha entregado la respuesta de su equipo" if self.equipos else "ha entregado su borrador"
         resultado.borradores = self._en_paralelo(
-            {m.nombre: (m, mensaje) for m in self.miembros}, "ha entregado su borrador",
-            resultado, "borrador")
+            {m.nombre: (lambda m=m: redactar(m)) for m in self.miembros}, aviso, resultado, "borrador")
         # Solo siguen los miembros que han entregado borrador.
         activos = [m for m in self.miembros if m.nombre in resultado.borradores]
         if len(activos) < 2:
@@ -132,7 +171,7 @@ class Consejo:
                 if autor is not revisor
             )
             msg = prompts.FASE_REVISION_CRUZADA.format(**contexto, respuestas=respuestas)
-            encargos[revisor.nombre] = (revisor, msg)
+            encargos[revisor.nombre] = lambda revisor=revisor, msg=msg: revisor.preguntar(self.sistema, msg)
         # Una revisión fallida no impide la síntesis: se trabaja con las que haya.
         resultado.revisiones = self._en_paralelo(encargos, "ha entregado su revisión", resultado, "revisión")
 
@@ -156,33 +195,20 @@ class Consejo:
         self.registro(f"✓ {resultado.presidente} ha entregado la síntesis final.")
         # Se anota al final porque el esfuerzo efectivo puede haberse rebajado durante la deliberación.
         resultado.modelos = {
-            m.nombre: m.descripcion() if hasattr(m, "descripcion") else m.modelo
+            m.nombre: (m.descripcion() if hasattr(m, "descripcion") else m.modelo)
+            + (" · equipo de cinco agentes" if m.nombre in self.equipos else "")
             for m in self.miembros
         }
         self.registro("Deliberación terminada.")
         return resultado
 
-    def _en_paralelo(self, encargos: dict[str, tuple[Miembro, str]], aviso: str,
+    def _en_paralelo(self, encargos: dict[str, Callable[[], str]], aviso: str,
                      resultado: Resultado, fase: str) -> dict[str, str]:
-        """Ejecuta los encargos en paralelo. Un miembro que falla no detiene a los demás: se
-        anota como incidencia y queda fuera del resultado."""
-        with ThreadPoolExecutor(max_workers=len(encargos)) as ejecutor:
-            futuros = {
-                ejecutor.submit(miembro.preguntar, self.sistema, mensaje): clave
-                for clave, (miembro, mensaje) in encargos.items()
-            }
-            # Se avisa de cada entrega en cuanto llega, para que el progreso sea visible.
-            resultados = {}
-            for hecho, futuro in enumerate(as_completed(futuros), 1):
-                clave = futuros[futuro]
-                try:
-                    resultados[clave] = futuro.result()
-                except Exception as e:
-                    self._incidencia(resultado, clave, fase, e)
-                    continue
-                self.registro(f"✓ {clave} {aviso} ({hecho} de {len(encargos)}).")
-            # Se conserva el orden de los miembros, del que depende su alias anónimo.
-            return {clave: resultados[clave] for clave in encargos if clave in resultados}
+        return en_paralelo(
+            encargos,
+            al_entregar=lambda clave, hecho, total: self.registro(f"✓ {clave} {aviso} ({hecho} de {total})."),
+            al_fallar=lambda clave, error: self._incidencia(resultado, clave, fase, error),
+        )
 
     def _incidencia(self, resultado: Resultado, nombre: str, fase: str, error: Exception) -> None:
         texto = f"{nombre} no pudo completar su {fase}: {type(error).__name__}: {str(error)[:300]}"

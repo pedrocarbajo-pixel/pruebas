@@ -36,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--nivel", choices=NIVELES, default="estandar",
                    help="«extremo»: modelos más capaces y esfuerzo máximo; solo para casos críticos "
                         "(mucho más lento y costoso)")
+    p.add_argument("--deliberacion", choices=["consejo", "agentes_claude", "consejo_agentes"],
+                   default="consejo",
+                   help="consejo (C, por defecto): las tres IA; agentes_claude (A): Claude con cinco agentes; "
+                        "consejo_agentes (B): cada IA con sus cinco agentes y después el consejo")
     p.add_argument("--seudonimizar", action="store_true",
                    help="sustituye DNI, NIE, CIF, IBAN, correos y teléfonos antes de enviar")
     p.add_argument("--salida", default="salidas", help="carpeta de resultados")
@@ -52,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         presidente=args.presidente,
         seudonimizar=args.seudonimizar,
         nivel=args.nivel,
+        deliberacion=args.deliberacion,
         carpeta=args.salida,
         registro=partial(print, file=sys.stderr),
     )

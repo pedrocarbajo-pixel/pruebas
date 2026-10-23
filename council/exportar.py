@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .consejo import Resultado
-from .prompts import MODOS
+from .prompts import DELIBERACIONES, MODOS
 
 AVISO = ("Aviso: este informe ha sido generado por modelos de lenguaje y constituye un borrador de "
          "apoyo. No sustituye el asesoramiento de un profesional cualificado, que debe revisarlo "
@@ -130,6 +130,7 @@ def metadatos(r: Resultado, restaurar) -> list[tuple[str, str]]:
     datos = [
         ("Fecha (UTC)", r.fecha[:19].replace("T", " ")),
         ("Tipo de trabajo", MODOS[r.modo][0]),
+        ("Deliberación", DELIBERACIONES[r.deliberacion][0]),
         ("Nivel", "Extremo (modelos más capaces y esfuerzo máximo)" if r.nivel == "extremo" else "Estándar"),
         ("Miembros", ", ".join(f"{n} ({m})" for n, m in r.modelos.items())),
         ("Presidente", r.presidente),

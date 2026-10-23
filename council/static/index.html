@@ -81,6 +81,7 @@
   #informe a { color: var(--acento); }
   #informe blockquote { margin: 0; padding: 8px 14px; border-left: 4px solid var(--aviso-borde);
            background: var(--aviso); }
+  #bloque-miembros.inactivo { opacity: .45; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -107,7 +108,11 @@
       </div>
     </div>
 
-    <div class="fila">
+    <label for="deliberacion">Modo de deliberación</label>
+    <select id="deliberacion" name="deliberacion"></select>
+    <div id="ayuda-deliberacion" class="ayuda"></div>
+
+    <div class="fila" id="bloque-miembros">
       <div>
         <label>Miembros del consejo</label>
         <div id="miembros" class="opciones"></div>
@@ -203,6 +208,9 @@ function actualizarPresidentes() {
 async function cargarConfiguracion() {
   const conf = await (await fetch("/api/configuracion")).json();
   for (const m of conf.modos) $("modo").add(new Option(m.nombre, m.id));
+  for (const d of conf.deliberaciones) $("deliberacion").add(new Option(d.nombre, d.id));
+  $("deliberacion").addEventListener("change", actualizarDeliberacion);
+  $("miembros").addEventListener("change", actualizarDeliberacion);
   for (const [i, f] of conf.formatos.entries()) {
     const enlace = document.createElement("a");
     enlace.className = i === 0 ? "boton" : "boton secundario";
@@ -218,11 +226,43 @@ async function cargarConfiguracion() {
     casilla.dataset.nombre = m.nombre;
     casilla.checked = m.disponible;
     casilla.disabled = !m.disponible;
+    casilla.dataset.disponible = m.disponible ? "1" : "0";
     casilla.addEventListener("change", actualizarPresidentes);
     etiqueta.append(m.nombre);
     $("miembros").append(etiqueta);
   }
   actualizarPresidentes();
+  actualizarDeliberacion();
+}
+
+// Llamadas a los modelos (y entregas que avanzan la barra de progreso) según el modo elegido.
+function pasosDeliberacion() {
+  const n = document.querySelectorAll("#miembros input:checked").length;
+  switch ($("deliberacion").value) {
+    case "agentes_claude":  // 5 análisis + 5 revisiones + coordinador
+      return { llamadas: 11, entregas: 11 };
+    case "consejo_agentes":  // por IA: 5 + 5 + coordinador; después, revisiones del consejo y presidente
+      return { llamadas: 11 * n + n + 1, entregas: 13 * n + 1 };
+    default:  // borradores + revisiones + síntesis
+      return { llamadas: 2 * n + 1, entregas: 2 * n + 1 };
+  }
+}
+
+function actualizarDeliberacion() {
+  const modo = $("deliberacion").value;
+  const soloClaude = modo === "agentes_claude";
+  $("bloque-miembros").classList.toggle("inactivo", soloClaude);
+  for (const c of document.querySelectorAll("#miembros input")) {
+    if (c.dataset.disponible === "1") c.disabled = soloClaude;
+  }
+  $("presidente").disabled = soloClaude;
+  const { llamadas } = pasosDeliberacion();
+  const textos = {
+    consejo: "Claude, ChatGPT y Perplexity elaboran borradores, se revisan de forma anónima y el presidente sintetiza.",
+    agentes_claude: "Solo Claude, con cinco agentes: el escéptico, el optimista, el práctico, el de la raíz y el de ojos nuevos. Analizan por separado, se revisan sin saber quién es quién y un coordinador integra.",
+    consejo_agentes: "Cada IA trabaja con sus cinco agentes y su respuesta pasa después al consejo. Es la opción más completa, pero bastante más lenta y costosa.",
+  };
+  $("ayuda-deliberacion").textContent = `${textos[modo]} Unas ${llamadas} llamadas a los modelos.`;
 }
 
 function mostrarError(texto) {
@@ -232,8 +272,7 @@ function mostrarError(texto) {
 
 // Indicador de actividad: cronómetro, icono y barra según la fase en curso.
 const EMOJIS = { 1: "✍️", 2: "🔍", 3: "⚖️", refinar: "📝" };
-const FASES = { 1: "Fase 1 de 3 · borradores independientes", 2: "Fase 2 de 3 · revisión cruzada",
-                3: "Fase 3 de 3 · síntesis del presidente", refinar: "El presidente prepara la nueva versión" };
+const TEXTO_REFINAR = "El presidente prepara la nueva versión";
 let trabajo = null;  // { inicio, pasos, refinar, reloj }
 
 function formatearTiempo(segundos) {
@@ -246,7 +285,7 @@ function iniciarActividad(pasos, refinar = false) {
   trabajo = { inicio: Date.now(), pasos, refinar };
   $("progreso").classList.remove("terminado", "fallido");
   $("emoji").textContent = refinar ? EMOJIS.refinar : "⏳";
-  $("fase").textContent = refinar ? FASES.refinar : "Preparando…";
+  $("fase").textContent = refinar ? TEXTO_REFINAR : "Preparando…";
   $("barra").style.width = refinar ? "100%" : "3%";
   $("cronometro").textContent = "0 s";
   trabajo.reloj = setInterval(() => {
@@ -258,15 +297,15 @@ function iniciarActividad(pasos, refinar = false) {
 function actualizarActividad(mensajes) {
   // En una versión corregida solo trabaja el presidente: la barra queda en movimiento continuo.
   if (!trabajo || trabajo.refinar) return;
-  let fase = 0;
+  let fase = 0, textoFase = "";
   for (const m of mensajes) {
-    const f = m.match(/Fase (\d)\/3/);
-    if (f) fase = Number(f[1]);
+    const f = m.match(/Fase (\d)\/3 · (.*?)…?$/);
+    if (f) [fase, textoFase] = [Number(f[1]), f[2]];
   }
   const hechos = mensajes.filter((m) => m.includes("✓")).length;
   if (fase) {
     $("emoji").textContent = EMOJIS[fase];
-    $("fase").textContent = FASES[fase];
+    $("fase").textContent = `Fase ${fase} de 3 · ${textoFase.toLowerCase()}`;
   }
   $("barra").style.width = `${Math.max(3, Math.round((hechos / trabajo.pasos) * 100))}%`;
 }
@@ -356,9 +395,10 @@ $("nivel").addEventListener("change", () => {
 
 $("formulario").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const { llamadas, entregas } = pasosDeliberacion();
   if ($("nivel").value === "extremo" &&
       !confirm("Nivel EXTREMO: se usarán los modelos más capaces con esfuerzo máximo. " +
-               "Es mucho más lento y costoso. ¿Desea continuar?")) return;
+               `Es mucho más lento y costoso (unas ${llamadas} llamadas a los modelos). ¿Desea continuar?`)) return;
   mostrarError("");
   $("resultado").hidden = true;
   $("refinar").hidden = true;
@@ -371,8 +411,7 @@ $("formulario").addEventListener("submit", async (e) => {
   }
   $("estado").textContent = "El consejo está trabajando… (puede tardar varios minutos)";
   $("mensajes").innerHTML = "";
-  const miembros = document.querySelectorAll("#miembros input:checked").length;
-  iniciarActividad(2 * miembros + 1);  // borradores + revisiones + síntesis
+  iniciarActividad(entregas);
   consultaActual = datos.id;
   seguir(datos.id);
 });
